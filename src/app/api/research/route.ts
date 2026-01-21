@@ -2,12 +2,15 @@ import { NextRequest, NextResponse } from 'next/server';
 import { researchSteps } from '@/lib/tools';
 import { executeTool, getThemeForDestination, ToolResult } from '@/lib/toolExecutor';
 import { TravelGuide, ResearchStep, BudgetEstimate, TransportationGuide, SafetyInfo, CultureGuide, MapLocation } from '@/types';
+import { enhanceSummary } from '@/lib/aiService';
 
-// Direct research approach - no AI orchestration needed
+// Direct research approach with optional AI enhancement
 // We execute real API calls in sequence and assemble the guide from collected data
+// AI is used to enhance summaries when available
 
 // Synthesize a travel guide from collected real API data
-function synthesizeGuideFromData(destination: string, data: Record<string, any>): TravelGuide {
+// Now async to support optional AI enhancement
+async function synthesizeGuideFromData(destination: string, data: Record<string, any>): Promise<TravelGuide> {
   // Extract data from various tool results
   const searchData = data['search_destination'] || {};
   const countryData = data['get_country_info'] || {};
@@ -71,39 +74,40 @@ function synthesizeGuideFromData(destination: string, data: Record<string, any>)
   }));
   
   // Build budget estimate - matching BudgetEstimate interface
+  // Use the comprehensive cost data from the budget tool
   const budget: BudgetEstimate = {
     currency: currencyCode,
     daily: {
-      budget: { min: budgetData.daily?.budget?.min || 30, max: budgetData.daily?.budget?.max || 50 },
-      midRange: { min: budgetData.daily?.midRange?.min || 80, max: budgetData.daily?.midRange?.max || 150 },
-      luxury: { min: budgetData.daily?.luxury?.min || 250, max: budgetData.daily?.luxury?.max || 500 },
+      budget: { min: budgetData.daily?.budget || 30, max: Math.round((budgetData.daily?.budget || 30) * 1.3) },
+      midRange: { min: budgetData.daily?.midRange || 80, max: Math.round((budgetData.daily?.midRange || 80) * 1.3) },
+      luxury: { min: budgetData.daily?.luxury || 250, max: Math.round((budgetData.daily?.luxury || 250) * 1.5) },
     },
-    breakdown: {
+    breakdown: budgetData.breakdown || {
       accommodation: {
-        budget: budgetData.breakdown?.accommodation?.budget || '$15-30/night',
-        midRange: budgetData.breakdown?.accommodation?.midRange || '$50-100/night',
-        luxury: budgetData.breakdown?.accommodation?.luxury || '$150-300+/night',
+        budget: '$15-30/night',
+        midRange: '$50-100/night',
+        luxury: '$150-300+/night',
       },
       food: {
-        budget: budgetData.breakdown?.food?.budget || '$10-20/day',
-        midRange: budgetData.breakdown?.food?.midRange || '$30-50/day',
-        luxury: budgetData.breakdown?.food?.luxury || '$80-150/day',
+        budget: '$10-20/day',
+        midRange: '$30-50/day',
+        luxury: '$80-150/day',
       },
       transport: {
-        budget: budgetData.breakdown?.transport?.budget || '$5-15/day',
-        midRange: budgetData.breakdown?.transport?.midRange || '$20-40/day',
-        luxury: budgetData.breakdown?.transport?.luxury || '$50-100/day',
+        budget: '$5-15/day',
+        midRange: '$20-40/day',
+        luxury: '$50-100/day',
       },
       activities: {
-        budget: budgetData.breakdown?.activities?.budget || '$5-20/day',
-        midRange: budgetData.breakdown?.activities?.midRange || '$30-60/day',
-        luxury: budgetData.breakdown?.activities?.luxury || '$100-200/day',
+        budget: '$5-20/day',
+        midRange: '$30-60/day',
+        luxury: '$100-200/day',
       },
     },
-    weeklyTotal: {
-      budget: { min: budgetData.weekly?.budget?.min || 210, max: budgetData.weekly?.budget?.max || 350 },
-      midRange: { min: budgetData.weekly?.midRange?.min || 560, max: budgetData.weekly?.midRange?.max || 1050 },
-      luxury: { min: budgetData.weekly?.luxury?.min || 1750, max: budgetData.weekly?.luxury?.max || 3500 },
+    weeklyTotal: budgetData.weekly || {
+      budget: { min: 210, max: 350 },
+      midRange: { min: 560, max: 1050 },
+      luxury: { min: 1750, max: 3500 },
     },
     tips: budgetData.tips || ['Research seasonal prices', 'Book accommodation in advance', 'Try local street food for savings'],
   };
@@ -129,7 +133,8 @@ function synthesizeGuideFromData(destination: string, data: Record<string, any>)
   };
   
   // Build safety info - matching SafetyInfo interface
-  const safetyRating = (safetyData.overallRating || safetyData.advisoryScore || 'moderate').toLowerCase();
+  // Use comprehensive safety data from the safety tool
+  const safetyRating = (safetyData.overallRating || safetyData.safetyData?.rating || 'moderate').toLowerCase();
   const safetyRatingMap: Record<string, 'very-safe' | 'safe' | 'moderate' | 'caution' | 'avoid'> = {
     'very-safe': 'very-safe', 'very safe': 'very-safe', 'low': 'safe',
     'safe': 'safe', 'moderate': 'moderate', 'medium': 'moderate',
@@ -137,33 +142,36 @@ function synthesizeGuideFromData(destination: string, data: Record<string, any>)
   };
   const safety: SafetyInfo = {
     overallRating: safetyRatingMap[safetyRating] || 'moderate',
-    summary: safetyData.summary || safetyData.advisorySummary || `Exercise normal precautions when visiting ${destination}`,
-    concerns: safetyData.concerns || safetyData.areasToAvoid || ['Check local advisories before travel'],
-    tips: safetyData.tips || safetyData.commonScams || ['Be aware of your surroundings', 'Keep valuables secure'],
-    emergencyNumbers: {
-      police: safetyData.emergencyNumbers?.police || '911 or local equivalent',
-      ambulance: safetyData.emergencyNumbers?.ambulance || '911 or local equivalent',
-      tourist: safetyData.emergencyNumbers?.tourist || 'Contact your embassy',
+    summary: safetyData.summary || safetyData.safetyData?.summary || `Exercise normal precautions when visiting ${destination}`,
+    concerns: safetyData.concerns || safetyData.safetyData?.concerns || ['Check local advisories before travel'],
+    tips: safetyData.tips || safetyData.safetyData?.tips || ['Be aware of your surroundings', 'Keep valuables secure'],
+    emergencyNumbers: safetyData.emergencyNumbers || safetyData.safetyData?.emergency || {
+      police: '911 or local equivalent',
+      ambulance: '911 or local equivalent',
+      tourist: 'Contact your embassy',
     },
-    healthAdvice: safetyData.healthAdvice || safetyData.healthTips || ['Consult a travel clinic before departure'],
+    healthAdvice: safetyData.healthAdvice || safetyData.safetyData?.health || ['Consult a travel clinic before departure'],
   };
   
   // Build culture guide - matching CultureGuide interface
+  // Use comprehensive culture data from the culture tool
   const culture: CultureGuide = {
-    summary: cultureData.summary || `${destination} has a rich cultural heritage with unique customs and traditions`,
-    etiquette: cultureData.etiquette || ['Respect local customs', 'Learn basic local phrases'],
-    dress: cultureData.dresscode || cultureData.dress || 'Dress modestly, especially at religious sites',
-    tipping: cultureData.tipping || budgetData.tippingCustoms || 'Tipping customs vary - check locally',
-    greetings: cultureData.greetings || 'Greet people respectfully, handshakes are common',
-    taboos: cultureData.taboos || ['Research local sensitivities'],
-    localCustoms: cultureData.localCustoms || cultureData.customs || ['Customs vary by region'],
+    summary: cultureData.summary || cultureData.cultureWiki?.extract || `${destination} has a rich cultural heritage with unique customs and traditions`,
+    etiquette: cultureData.etiquette || cultureData.cultureData?.etiquette || ['Respect local customs', 'Learn basic local phrases'],
+    dress: cultureData.dress || cultureData.cultureData?.dress || 'Dress modestly, especially at religious sites',
+    tipping: cultureData.tipping || cultureData.cultureData?.tipping || 'Tipping customs vary - check locally',
+    greetings: cultureData.greetings || cultureData.cultureData?.greetings || 'Greet people respectfully, handshakes are common',
+    taboos: cultureData.taboos || cultureData.cultureData?.taboos || ['Research local sensitivities'],
+    localCustoms: cultureData.customs || cultureData.cultureData?.customs || ['Customs vary by region'],
   };
   
-  // Build common mistakes
+  // Build common mistakes - use structured data from local tips
   const mistakesRaw = tipsData.commonMistakes || [
-    'Not researching local customs',
-    'Only visiting tourist areas', 
-    'Not trying local food'
+    { mistake: 'Not researching local customs', why: 'Can lead to awkward situations', instead: 'Learn basic etiquette before visiting' },
+    { mistake: 'Only visiting tourist areas', why: 'Miss authentic experiences', instead: 'Explore local neighborhoods' },
+    { mistake: 'Not trying local food', why: 'Food is key to culture', instead: 'Eat where locals eat' },
+    { mistake: 'Overpacking', why: 'Limits mobility', instead: 'Pack light and buy local' },
+    { mistake: 'Not having backup payment', why: 'Cards can fail abroad', instead: 'Carry cash and multiple cards' },
   ];
   const mistakes = mistakesRaw.slice(0, 5).map((mistake: any, i: number) => ({
     mistake: typeof mistake === 'string' ? mistake : (mistake.mistake || `Mistake ${i + 1}`),
@@ -171,12 +179,14 @@ function synthesizeGuideFromData(destination: string, data: Record<string, any>)
     instead: typeof mistake === 'object' && mistake.instead ? mistake.instead : 'Research and plan accordingly',
   }));
   
-  // Build best for traveler types
-  const bestFor = (tipsData.bestFor || [
-    { type: 'Culture Enthusiasts', why: 'Rich history and traditions' },
-    { type: 'Adventure Seekers', why: 'Diverse landscapes and activities' },
-    { type: 'Food Lovers', why: 'Unique local cuisine' },
-  ]).slice(0, 4).map((t: any) => ({
+  // Build best for traveler types - use structured data
+  const bestForRaw = tipsData.bestFor || [
+    { type: 'Culture Enthusiasts', why: 'Rich history and traditions', highlights: ['Museums', 'Historic sites', 'Local festivals'] },
+    { type: 'Food Lovers', why: 'Unique local cuisine', highlights: ['Street food', 'Traditional restaurants', 'Local markets'] },
+    { type: 'Adventure Seekers', why: 'Diverse landscapes and activities', highlights: ['Hiking', 'Outdoor activities', 'Day trips'] },
+    { type: 'History Buffs', why: 'Ancient sites and museums', highlights: ['Archaeological sites', 'Historic landmarks', 'Museums'] },
+  ];
+  const bestFor = bestForRaw.slice(0, 4).map((t: any) => ({
     type: typeof t === 'string' ? t : t.type,
     why: typeof t === 'object' ? t.why : `Great destination for ${t}`,
     highlights: typeof t === 'object' && t.highlights ? t.highlights : ['Local experiences'],
@@ -206,13 +216,33 @@ function synthesizeGuideFromData(destination: string, data: Record<string, any>)
     })),
   ];
   
+  // Get base summary
+  let overviewSummary = searchData.wikipedia?.extract || 
+                        searchData.wikipedia?.summary || 
+                        countryData.summary || 
+                        `Welcome to ${destination}. This guide was compiled using real-time data from multiple APIs.`;
+  
+  // Try AI enhancement for the summary (non-blocking, with fallback)
+  try {
+    if (overviewSummary && overviewSummary.length > 100) {
+      const enhanced = await enhanceSummary(destination, overviewSummary.substring(0, 500));
+      if (enhanced && enhanced.length > 50) {
+        overviewSummary = enhanced;
+        console.log('[Synthesis] AI enhanced the overview summary');
+      }
+    }
+  } catch (e) {
+    console.log('[Synthesis] AI enhancement skipped:', e);
+    // Keep original summary
+  }
+  
   // Compile the guide matching TravelGuide interface
   const guide: TravelGuide = {
     destination,
     country: countryData.name || searchData.country || destination,
     theme: getThemeForDestination(destination),
     overview: {
-      summary: searchData.wikipedia?.summary || countryData.summary || `Welcome to ${destination}. This guide was compiled using real-time data from multiple APIs.`,
+      summary: overviewSummary,
       highlights: attractions.slice(0, 5).map((a: any) => a.name),
       bestTimeToVisit: weatherData.bestTimeToVisit || searchData.bestTimeToVisit || 'Spring and Fall',
       climate: weatherData.climate || weatherData.description || 'Check seasonal weather patterns',
@@ -447,8 +477,8 @@ export async function POST(request: NextRequest) {
         sendProgress(95);
         console.log(`[Research] All tools executed, synthesizing guide...`);
         
-        // Generate the final travel guide from collected real API data
-        const guide = synthesizeGuideFromData(destination, collectedData);
+        // Generate the final travel guide from collected real API data (with optional AI enhancement)
+        const guide = await synthesizeGuideFromData(destination, collectedData);
         
         sendProgress(100);
         console.log(`[Research] Guide generated for ${destination}`);

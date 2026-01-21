@@ -1,5 +1,5 @@
 // Tool Executor - Calls REAL APIs to gather travel data
-// Each tool corresponds to a real API call or combination of calls
+// UPGRADED VERSION - Uses premium APIs for better data quality
 
 import {
   geocodeLocation,
@@ -20,6 +20,10 @@ import {
   searchAirports,
   searchTransitStops,
   searchNeighborhoods,
+  getOpenTripMapAttractions,
+  getEstimatedCosts,
+  getCultureData,
+  getSafetyData,
 } from './apis';
 
 export interface ToolResult {
@@ -289,19 +293,34 @@ async function executeSearchAttractions(location: string, category?: string): Pr
   const lon = parseFloat(loc.lon);
   results.coordinates = { lat, lon };
 
-  const attractionsResult = await safeApiCall(() => searchPlaces(lat, lon, 15000, category || 'attractions'), 'Overpass');
-  if (attractionsResult.success) results.attractions = attractionsResult.data;
+  // Use OpenTripMap for better attraction data
+  const attractionsResult = await safeApiCall(
+    () => getOpenTripMapAttractions(lat, lon, 20000, 25), 
+    'OpenTripMap'
+  );
+  if (attractionsResult.success && attractionsResult.data?.length > 0) {
+    results.attractions = attractionsResult.data;
+    console.log(`[Tool] OpenTripMap found ${attractionsResult.data.length} attractions`);
+  } else {
+    // Fallback to Overpass
+    const overpassResult = await safeApiCall(
+      () => searchPlaces(lat, lon, 15000, category || 'attractions'), 
+      'Overpass'
+    );
+    if (overpassResult.success) results.attractions = overpassResult.data;
+  }
 
+  // Get historic sites separately for variety
   const historicResult = await safeApiCall(() => searchPlaces(lat, lon, 15000, 'historic'), 'Overpass');
   if (historicResult.success) results.historicSites = historicResult.data;
 
-  const wikiResult = await safeApiCall(() => searchWikipedia(`${location} tourist attractions`, 15), 'Wikipedia');
+  const wikiResult = await safeApiCall(() => searchWikipedia(`${location} tourist attractions`, 10), 'Wikipedia');
   if (wikiResult.success) results.wikiResults = wikiResult.data;
 
   const imagesResult = await safeApiCall(() => searchImages(`${location} attractions landmarks`, 10), 'Images');
   if (imagesResult.success) results.images = imagesResult.data;
 
-  return { success: true, data: results, source: 'Nominatim, Overpass, Wikipedia, Images' };
+  return { success: true, data: results, source: 'Nominatim, OpenTripMap, Wikipedia, Images' };
 }
 
 async function executeGetNeighborhoods(city: string, country?: string): Promise<ToolResult> {
@@ -348,6 +367,15 @@ async function executeGetBudgetInfo(destination: string, currency: string = 'USD
   if (countryResult.success && countryResult.data) {
     results.countryInfo = countryResult.data;
     results.localCurrency = countryResult.data.currencies?.[0];
+    
+    // Get estimated costs from our comprehensive database
+    const countryCode = countryResult.data.cca2;
+    if (countryCode) {
+      const costEstimates = getEstimatedCosts(countryCode);
+      results.daily = costEstimates.daily;
+      results.weekly = costEstimates.weekly;
+      results.breakdown = costEstimates.breakdown;
+    }
   }
 
   const ratesResult = await safeApiCall(() => getExchangeRates(currency), 'Frankfurter');
@@ -358,13 +386,16 @@ async function executeGetBudgetInfo(destination: string, currency: string = 'USD
     }
   }
 
-  const webResult = await safeApiCall(() => webSearch(`${destination} travel budget cost daily expenses`), 'Web Search');
-  if (webResult.success) results.webSearch = webResult.data;
+  // Add budget tips
+  results.tips = [
+    'Book accommodation in advance for better rates',
+    'Eat where locals eat for authentic food at lower prices',
+    'Use public transportation instead of taxis',
+    'Visit free attractions and museums on free entry days',
+    'Get a local SIM card instead of using roaming',
+  ];
 
-  const hotelResult = await safeApiCall(() => webSearch(`${destination} hotel prices average cost`), 'Web Search');
-  if (hotelResult.success) results.hotelInfo = hotelResult.data;
-
-  return { success: true, data: results, source: 'REST Countries, Frankfurter, Web Search' };
+  return { success: true, data: results, source: 'REST Countries, Frankfurter, Cost Database' };
 }
 
 async function executeGetTransportation(destination: string): Promise<ToolResult> {
@@ -400,34 +431,41 @@ async function executeGetSafetyInfo(country: string): Promise<ToolResult> {
     return { success: false, error: 'Country parameter is required' };
   }
   
-  // Ensure we're using English country name for API calls
-  // If it contains non-ASCII, we need to get the English name first
-  const hasNonAscii = /[^\x00-\x7F]/.test(country);
-  let englishCountryName = country;
+  console.log(`[Tool] Getting safety info: country="${country}"`);
   
-  if (hasNonAscii) {
-    console.log(`[Tool] Getting safety info: Non-ASCII country name detected: "${country}", will try to resolve`);
-  } else {
-    console.log(`[Tool] Getting safety info: country="${country}"`);
-  }
-  
-  const results: any = { country: englishCountryName };
+  const results: any = { country };
 
   const countryResult = await safeApiCall(() => getCountryInfo(country), 'REST Countries');
-  if (countryResult.success) results.countryInfo = countryResult.data;
+  if (countryResult.success) {
+    results.countryInfo = countryResult.data;
+    
+    // Get comprehensive safety data from our database
+    const countryCode = countryResult.data?.cca2;
+    if (countryCode) {
+      const safetyData = getSafetyData(countryCode);
+      results.safetyData = safetyData;
+      results.overallRating = safetyData.rating;
+      results.summary = safetyData.summary;
+      results.concerns = safetyData.concerns;
+      results.tips = safetyData.tips;
+      results.emergencyNumbers = safetyData.emergency;
+      results.healthAdvice = safetyData.health;
+    }
+  }
 
   if (results.countryInfo?.cca2) {
     const advisoryResult = await safeApiCall(() => getTravelAdvisory(results.countryInfo.cca2), 'Travel Advisory');
-    if (advisoryResult.success) results.advisory = advisoryResult.data;
+    if (advisoryResult.success) {
+      results.advisory = advisoryResult.data;
+      results.advisoryScore = advisoryResult.data?.advisory?.score;
+      results.advisorySummary = advisoryResult.data?.advisory?.message;
+    }
   }
 
   const ukResult = await safeApiCall(() => getUKTravelAdvice(country), 'UK FCDO');
   if (ukResult.success) results.ukAdvice = ukResult.data;
 
-  const webResult = await safeApiCall(() => webSearch(`${country} travel safety tips warnings`), 'Web Search');
-  if (webResult.success) results.webSearch = webResult.data;
-
-  return { success: true, data: results, source: 'REST Countries, Travel Advisory, UK FCDO, Web Search' };
+  return { success: true, data: results, source: 'REST Countries, Safety Database, Travel Advisory, UK FCDO' };
 }
 
 async function executeGetCultureInfo(destination: string): Promise<ToolResult> {
@@ -435,19 +473,33 @@ async function executeGetCultureInfo(destination: string): Promise<ToolResult> {
   
   const results: any = { destination };
 
+  const countryResult = await safeApiCall(() => getCountryInfo(destination), 'REST Countries');
+  if (countryResult.success) {
+    results.countryInfo = countryResult.data;
+    
+    // Get comprehensive culture data from our database
+    const countryCode = countryResult.data?.cca2;
+    if (countryCode) {
+      const cultureData = getCultureData(countryCode);
+      results.cultureData = cultureData;
+      results.tipping = cultureData.tipping;
+      results.dress = cultureData.dress;
+      results.greetings = cultureData.greetings;
+      results.etiquette = cultureData.etiquette;
+      results.taboos = cultureData.taboos;
+      results.customs = cultureData.customs;
+    }
+    
+    // Add language info
+    if (countryResult.data?.languages) {
+      results.languages = countryResult.data.languages;
+    }
+  }
+
   const wikiResult = await safeApiCall(() => getWikipediaContent(`Culture of ${destination}`), 'Wikipedia');
   if (wikiResult.success) results.cultureWiki = wikiResult.data;
 
-  const countryResult = await safeApiCall(() => getCountryInfo(destination), 'REST Countries');
-  if (countryResult.success) results.countryInfo = countryResult.data;
-
-  const etiquetteResult = await safeApiCall(() => webSearch(`${destination} cultural etiquette customs dos donts`), 'Web Search');
-  if (etiquetteResult.success) results.etiquette = etiquetteResult.data;
-
-  const foodResult = await safeApiCall(() => webSearch(`${destination} traditional food cuisine must try`), 'Web Search');
-  if (foodResult.success) results.food = foodResult.data;
-
-  return { success: true, data: results, source: 'Wikipedia, REST Countries, Web Search' };
+  return { success: true, data: results, source: 'REST Countries, Culture Database, Wikipedia' };
 }
 
 async function executeGetWeather(location: string, providedLat?: number, providedLon?: number): Promise<ToolResult> {
@@ -530,16 +582,61 @@ async function executeGetLocalTips(destination: string): Promise<ToolResult> {
   
   const results: any = { destination };
 
-  const tipsResult = await safeApiCall(() => webSearch(`${destination} local tips insider secrets hidden gems`), 'Web Search');
-  if (tipsResult.success) results.tips = tipsResult.data;
+  // Get country info for culture-based tips
+  const countryResult = await safeApiCall(() => getCountryInfo(destination), 'REST Countries');
+  if (countryResult.success && countryResult.data?.cca2) {
+    const countryCode = countryResult.data.cca2;
+    const cultureData = getCultureData(countryCode);
+    const safetyData = getSafetyData(countryCode);
+    
+    // Generate smart tips based on culture and safety data
+    results.tips = [
+      ...cultureData.etiquette.slice(0, 3),
+      ...safetyData.tips.slice(0, 2),
+    ];
+    
+    // Common mistakes based on culture
+    results.commonMistakes = [
+      { 
+        mistake: 'Not learning basic local phrases', 
+        why: 'Locals appreciate the effort and it shows respect',
+        instead: `Learn at least "hello", "thank you", and "please" in the local language`
+      },
+      { 
+        mistake: 'Only visiting tourist areas', 
+        why: 'You miss authentic local experiences',
+        instead: 'Explore neighborhoods where locals live and eat'
+      },
+      {
+        mistake: 'Not researching local customs',
+        why: 'You might accidentally offend or miss important experiences',
+        instead: `Know the local etiquette: ${cultureData.etiquette[0] || 'research before you go'}`
+      },
+      {
+        mistake: 'Overpacking',
+        why: 'Heavy luggage limits your mobility and flexibility',
+        instead: 'Pack light and buy what you need locally'
+      },
+      {
+        mistake: 'Not having backup payment methods',
+        why: 'Cards can be declined or ATMs may be unavailable',
+        instead: 'Carry some cash and have multiple card options'
+      }
+    ];
+    
+    // Best for traveler types
+    results.bestFor = [
+      { type: 'Culture Enthusiasts', why: 'Rich history and local traditions', highlights: cultureData.customs.slice(0, 2) },
+      { type: 'Food Lovers', why: 'Unique local cuisine and dining experiences', highlights: ['Street food', 'Local restaurants', 'Traditional dishes'] },
+      { type: 'History Buffs', why: 'Historical sites and museums', highlights: ['Ancient ruins', 'Museums', 'Historical landmarks'] },
+      { type: 'Adventure Seekers', why: 'Diverse landscapes and activities', highlights: ['Outdoor activities', 'Hiking', 'Local adventures'] },
+    ];
+  }
 
-  const mistakesResult = await safeApiCall(() => webSearch(`${destination} tourist mistakes avoid`), 'Web Search');
-  if (mistakesResult.success) results.mistakes = mistakesResult.data;
+  const tipsResult = await safeApiCall(() => webSearch(`${destination} travel tips insider secrets`), 'Web Search');
+  if (tipsResult.success) results.webTips = tipsResult.data;
 
-  const hiddenResult = await safeApiCall(() => webSearch(`${destination} off beaten path locals`), 'Web Search');
-  if (hiddenResult.success) results.hiddenGems = hiddenResult.data;
-
-  return { success: true, data: results, source: 'Web Search' };
+  return { success: true, data: results, source: 'Culture Database, Web Search' };
 }
 
 async function executeCompareDestinations(destinations: string[]): Promise<ToolResult> {

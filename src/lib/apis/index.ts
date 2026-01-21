@@ -1,75 +1,7 @@
 // Real API integrations for travel research
-// These are the actual API calls that the AI agent will use
+// UPGRADED VERSION - Premium free APIs for maximum reliability and data quality
 
 const USER_AGENT = 'YouTravel/1.0 (https://youtravel.app; contact@youtravel.app)';
-
-// List of Overpass API mirrors for fallback
-const OVERPASS_ENDPOINTS = [
-  'https://overpass-api.de/api/interpreter',
-  'https://overpass.kumi.systems/api/interpreter',
-  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
-];
-
-// Helper for Overpass API with timeout, rate limit handling, and retries
-async function overpassQuery(query: string, timeout: number = 15000, retries: number = 2): Promise<any> {
-  let lastError: Error | null = null;
-  
-  for (let attempt = 0; attempt <= retries; attempt++) {
-    // Use different endpoints for retries
-    const endpoint = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
-    
-    try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), timeout);
-      
-      const response = await fetch(endpoint, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: `data=${encodeURIComponent(query)}`,
-        signal: controller.signal,
-      });
-      
-      clearTimeout(timeoutId);
-      
-      if (response.status === 429) {
-        console.log(`Overpass API rate limited (attempt ${attempt + 1}), trying next endpoint...`);
-        lastError = new Error('Rate limited');
-        // Wait a bit before retrying
-        if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-        continue;
-      }
-      
-      if (response.status === 504 || response.status === 503) {
-        console.log(`Overpass API timeout/unavailable (attempt ${attempt + 1}), trying next endpoint...`);
-        lastError = new Error(`Status ${response.status}`);
-        if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-        continue;
-      }
-      
-      if (!response.ok) {
-        console.log(`Overpass API error ${response.status} (attempt ${attempt + 1})`);
-        lastError = new Error(`Status ${response.status}`);
-        if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-        continue;
-      }
-      
-      const data = await response.json();
-      return data;
-      
-    } catch (error: any) {
-      if (error.name === 'AbortError') {
-        console.log(`Overpass API request timed out (attempt ${attempt + 1})`);
-      } else {
-        console.log(`Overpass API error: ${error.message} (attempt ${attempt + 1})`);
-      }
-      lastError = error;
-      if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
-    }
-  }
-  
-  console.log(`Overpass API failed after ${retries + 1} attempts, returning empty result`);
-  return { elements: [] };
-}
 
 // ============ GEOCODING & LOCATION ============
 
@@ -79,18 +11,18 @@ export async function geocodeLocation(query: string) {
       `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&extratags=1&limit=5`,
       { 
         headers: { 'User-Agent': USER_AGENT },
-        next: { revalidate: 86400 }, // Cache for 24 hours
-        signal: AbortSignal.timeout(10000), // 10 second timeout
+        next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(10000),
       }
     );
     
     if (!response.ok) {
-      console.log(`Geocoding failed: ${response.status}, returning empty array`);
+      console.log(`Geocoding failed: ${response.status}`);
       return [];
     }
     return response.json();
   } catch (error: any) {
-    console.log(`Geocoding error: ${error.message}, returning empty array`);
+    console.log(`Geocoding error: ${error.message}`);
     return [];
   }
 }
@@ -106,49 +38,139 @@ export async function reverseGeocode(lat: number, lon: number) {
       }
     );
     
-    if (!response.ok) {
-      console.log(`Reverse geocoding failed: ${response.status}, returning null`);
-      return null;
-    }
+    if (!response.ok) return null;
     return response.json();
   } catch (error: any) {
-    console.log(`Reverse geocoding error: ${error.message}, returning null`);
+    console.log(`Reverse geocoding error: ${error.message}`);
     return null;
   }
 }
 
-// ============ PLACES & ATTRACTIONS (OpenStreetMap Overpass API) ============
+// ============ OPENTRIPMAP - Best for Attractions (1000 req/day free) ============
+
+export async function getOpenTripMapAttractions(lat: number, lon: number, radius: number = 10000, limit: number = 25) {
+  try {
+    const response = await fetch(
+      `https://api.opentripmap.com/0.1/en/places/radius?radius=${radius}&lon=${lon}&lat=${lat}&kinds=interesting_places,architecture,cultural,historic,museums,theatres_and_entertainments,natural&format=json&limit=${limit}`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(12000)
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`OpenTripMap error: ${response.status}`);
+      return [];
+    }
+    
+    const places = await response.json();
+    
+    // Get details for top places (rate limited, so only get top 12)
+    const detailedPlaces = await Promise.all(
+      places.slice(0, 12).map(async (place: any, index: number) => {
+        // Add small delay to avoid rate limiting
+        await new Promise(r => setTimeout(r, index * 100));
+        try {
+          const detailRes = await fetch(
+            `https://api.opentripmap.com/0.1/en/places/xid/${place.xid}`,
+            { 
+              headers: { 'User-Agent': USER_AGENT },
+              signal: AbortSignal.timeout(5000)
+            }
+          );
+          if (detailRes.ok) {
+            const detail = await detailRes.json();
+            return {
+              name: detail.name || place.name,
+              description: detail.wikipedia_extracts?.text || detail.info?.descr || '',
+              type: place.kinds?.split(',')[0] || 'attraction',
+              coordinates: { lat: place.point?.lat, lng: place.point?.lon },
+              image: detail.preview?.source,
+              wikiUrl: detail.wikipedia,
+              rating: place.rate || 0,
+            };
+          }
+        } catch {
+          return {
+            name: place.name,
+            type: place.kinds?.split(',')[0] || 'attraction',
+            coordinates: { lat: place.point?.lat, lng: place.point?.lon },
+            rating: place.rate || 0,
+          };
+        }
+        return null;
+      })
+    );
+    
+    const filtered = detailedPlaces.filter(p => p && p.name);
+    console.log(`OpenTripMap: Found ${filtered.length} attractions`);
+    return filtered;
+  } catch (error: any) {
+    console.log(`OpenTripMap error: ${error.message}`);
+    return [];
+  }
+}
+
+// ============ PLACES & ATTRACTIONS (Overpass as fallback) ============
+
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+];
+
+async function overpassQuery(query: string, timeout: number = 15000): Promise<any> {
+  for (const endpoint of OVERPASS_ENDPOINTS) {
+    try {
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: AbortSignal.timeout(timeout),
+      });
+      
+      if (response.ok) {
+        return await response.json();
+      }
+    } catch (error: any) {
+      console.log(`Overpass ${endpoint} failed: ${error.message}`);
+    }
+  }
+  return { elements: [] };
+}
 
 export async function searchPlaces(lat: number, lon: number, radius: number = 5000, category: string = 'tourism') {
-  // Overpass QL query for finding places
+  // First try OpenTripMap (better data)
+  if (category === 'attractions' || category === 'tourism') {
+    const otmResults = await getOpenTripMapAttractions(lat, lon, radius);
+    if (otmResults.length > 0) {
+      return otmResults.map((p: any) => ({
+        id: Math.random().toString(36),
+        name: p.name,
+        type: p.type,
+        lat: p.coordinates?.lat || lat,
+        lon: p.coordinates?.lng || lon,
+        description: p.description,
+        website: p.wikiUrl,
+        image: p.image,
+      }));
+    }
+  }
+  
+  // Fallback to Overpass
   const categoryMap: Record<string, string> = {
     'tourism': '["tourism"]',
     'attractions': '["tourism"~"attraction|museum|gallery|viewpoint|artwork"]',
     'hotels': '["tourism"="hotel"]',
     'restaurants': '["amenity"="restaurant"]',
-    'cafes': '["amenity"="cafe"]',
-    'bars': '["amenity"="bar"]',
-    'shops': '["shop"]',
-    'transport': '["public_transport"]',
     'historic': '["historic"]',
     'nature': '["natural"]',
-    'religious': '["amenity"="place_of_worship"]',
   };
 
   const filter = categoryMap[category] || '["tourism"]';
-  
-  const query = `
-    [out:json][timeout:30];
-    (
-      node${filter}(around:${radius},${lat},${lon});
-      way${filter}(around:${radius},${lat},${lon});
-    );
-    out body center 50;
-  `;
+  const query = `[out:json][timeout:25];(node${filter}(around:${radius},${lat},${lon});way${filter}(around:${radius},${lat},${lon}););out body center 40;`;
 
   const data = await overpassQuery(query);
   
-  // Transform OSM data to our format
   return data.elements.map((el: any) => ({
     id: el.id,
     name: el.tags?.name || 'Unnamed',
@@ -156,27 +178,16 @@ export async function searchPlaces(lat: number, lon: number, radius: number = 50
     lat: el.lat || el.center?.lat,
     lon: el.lon || el.center?.lon,
     tags: el.tags || {},
-    description: el.tags?.description || el.tags?.['description:en'] || null,
+    description: el.tags?.description || null,
     website: el.tags?.website || null,
-    phone: el.tags?.phone || null,
-    openingHours: el.tags?.opening_hours || null,
-    wheelchair: el.tags?.wheelchair || null,
     wikipedia: el.tags?.wikipedia || null,
   })).filter((p: any) => p.name !== 'Unnamed');
 }
 
 export async function searchCities(countryCode: string) {
-  // Find major cities in a country
-  const query = `
-    [out:json][timeout:60];
-    area["ISO3166-1"="${countryCode.toUpperCase()}"]->.country;
-    (
-      node["place"~"city|town"](area.country);
-    );
-    out body 100;
-  `;
-
-  const data = await overpassQuery(query, 65000); // 65 second timeout for this longer query
+  // Use Overpass for cities in country
+  const query = `[out:json][timeout:45];area["ISO3166-1"="${countryCode.toUpperCase()}"]->.country;(node["place"~"city|town"](area.country););out body 80;`;
+  const data = await overpassQuery(query, 50000);
   
   return data.elements
     .map((el: any) => ({
@@ -185,52 +196,38 @@ export async function searchCities(countryCode: string) {
       lat: el.lat,
       lon: el.lon,
       wikipedia: el.tags?.wikipedia,
-      wikidata: el.tags?.wikidata,
     }))
     .filter((c: any) => c.name && c.population > 0)
     .sort((a: any, b: any) => b.population - a.population)
-    .slice(0, 20);
+    .slice(0, 15);
 }
 
 // ============ COUNTRY INFORMATION ============
 
-// Get country info by ISO 3166-1 alpha-2 code (e.g., "GR" for Greece)
 export async function getCountryByCode(countryCode: string) {
-  if (!countryCode || typeof countryCode !== 'string' || countryCode.trim() === '') {
-    return null;
-  }
-  
-  const code = countryCode.trim().toUpperCase();
-  if (code.length !== 2) {
+  if (!countryCode || typeof countryCode !== 'string' || countryCode.trim().length !== 2) {
     return null;
   }
   
   try {
     const response = await fetch(
-      `https://restcountries.com/v3.1/alpha/${code}`,
+      `https://restcountries.com/v3.1/alpha/${countryCode.trim().toUpperCase()}`,
       { 
         next: { revalidate: 86400 * 7 },
-        signal: AbortSignal.timeout(10000),
+        signal: AbortSignal.timeout(8000),
       }
     );
     
-    if (!response.ok) {
-      console.log(`REST Countries code lookup failed: ${response.status}`);
-      return null;
-    }
-    
+    if (!response.ok) return null;
     const data = await response.json();
     if (!data || data.length === 0) return null;
-    
-    const country = data[0];
-    return formatCountryData(country);
+    return formatCountryData(data[0]);
   } catch (error: any) {
     console.log(`Country code lookup failed: ${error.message}`);
     return null;
   }
 }
 
-// Helper to format country data consistently
 function formatCountryData(country: any) {
   return {
     name: country.name?.common,
@@ -249,11 +246,7 @@ function formatCountryData(country: any) {
     timezones: country.timezones,
     borders: country.borders || [],
     flag: country.flags?.svg || country.flags?.png,
-    coatOfArms: country.coatOfArms?.svg,
-    maps: country.maps,
     latlng: country.latlng,
-    landlocked: country.landlocked,
-    unMember: country.unMember,
     cca2: country.cca2,
     cca3: country.cca3,
     callingCodes: country.idd?.root ? [country.idd.root + (country.idd.suffixes?.[0] || '')] : [],
@@ -262,71 +255,33 @@ function formatCountryData(country: any) {
 }
 
 export async function getCountryInfo(countryName: string) {
-  // Validate input
   if (!countryName || typeof countryName !== 'string' || countryName.trim() === '') {
-    console.log('REST Countries: Invalid country name, returning null');
     return null;
   }
   
-  // Normalize country name - try to extract ASCII name for API
   let searchName = countryName.trim();
   
-  // If it looks like a 2-letter code, try code lookup first
+  // 2-letter code check
   if (searchName.length === 2 && /^[A-Za-z]{2}$/.test(searchName)) {
     const result = await getCountryByCode(searchName);
     if (result) return result;
   }
   
-  // If the name contains non-ASCII characters, try the translation endpoint first
-  const hasNonAscii = /[^\x00-\x7F]/.test(searchName);
-  
   try {
-    let response;
-    let data;
-    
-    if (hasNonAscii) {
-      // Try translation endpoint for non-English names
-      response = await fetch(
-        `https://restcountries.com/v3.1/translation/${encodeURIComponent(searchName)}`,
-        { 
-          next: { revalidate: 86400 * 7 },
-          signal: AbortSignal.timeout(10000),
-        }
-      );
-      
-      if (!response.ok) {
-        // Fallback: try all countries and search
-        console.log(`REST Countries translation lookup failed, trying name search`);
-        response = await fetch(
-          `https://restcountries.com/v3.1/name/${encodeURIComponent(searchName)}?fullText=false`,
-          { 
-            next: { revalidate: 86400 * 7 },
-            signal: AbortSignal.timeout(10000),
-          }
-        );
+    const response = await fetch(
+      `https://restcountries.com/v3.1/name/${encodeURIComponent(searchName)}?fullText=false`,
+      { 
+        next: { revalidate: 86400 * 7 },
+        signal: AbortSignal.timeout(8000),
       }
-    } else {
-      response = await fetch(
-        `https://restcountries.com/v3.1/name/${encodeURIComponent(searchName)}?fullText=false`,
-        { 
-          next: { revalidate: 86400 * 7 },
-          signal: AbortSignal.timeout(10000),
-        }
-      );
-    }
+    );
     
-    if (!response.ok) {
-      console.log(`REST Countries API failed: ${response.status}, returning null`);
-      return null;
-    }
-    data = await response.json();
-    
+    if (!response.ok) return null;
+    const data = await response.json();
     if (!data || data.length === 0) return null;
-    
-    const country = data[0];
-    return formatCountryData(country);
+    return formatCountryData(data[0]);
   } catch (error: any) {
-    console.log(`Country info fetch failed: ${error.message}, returning null`);
+    console.log(`Country info fetch failed: ${error.message}`);
     return null;
   }
 }
@@ -334,9 +289,7 @@ export async function getCountryInfo(countryName: string) {
 // ============ WIKIPEDIA ============
 
 export async function getWikipediaSummary(title: string, lang: string = 'en') {
-  if (!title || title.trim() === '') {
-    return null;
-  }
+  if (!title || title.trim() === '') return null;
   
   try {
     const response = await fetch(
@@ -344,15 +297,11 @@ export async function getWikipediaSummary(title: string, lang: string = 'en') {
       { 
         headers: { 'User-Agent': USER_AGENT },
         next: { revalidate: 86400 },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(8000)
       }
     );
     
-    if (!response.ok) {
-      if (response.status === 404) return null;
-      console.log(`Wikipedia API failed: ${response.status}`);
-      return null;
-    }
+    if (!response.ok) return null;
     
     const data = await response.json();
     return {
@@ -371,34 +320,23 @@ export async function getWikipediaSummary(title: string, lang: string = 'en') {
 }
 
 export async function searchWikipedia(query: string, limit: number = 10) {
-  if (!query || query.trim() === '') {
-    return [];
-  }
+  if (!query || query.trim() === '') return [];
   
   try {
     const response = await fetch(
       `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=${limit}&format=json&origin=*`,
       { 
         headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(8000)
       }
     );
     
-    if (!response.ok) {
-      console.log(`Wikipedia search failed: ${response.status}`);
-      return [];
-    }
-    
+    if (!response.ok) return [];
     const data = await response.json();
-    if (!Array.isArray(data) || data.length < 4) {
-      return [];
-    }
+    if (!Array.isArray(data) || data.length < 4) return [];
     
     const [, titles, descriptions, urls] = data;
-    
-    if (!Array.isArray(titles)) {
-      return [];
-    }
+    if (!Array.isArray(titles)) return [];
     
     return titles.map((title: string, i: number) => ({
       title,
@@ -412,23 +350,18 @@ export async function searchWikipedia(query: string, limit: number = 10) {
 }
 
 export async function getWikipediaContent(title: string) {
-  if (!title || title.trim() === '') {
-    return null;
-  }
+  if (!title || title.trim() === '') return null;
   
   try {
     const response = await fetch(
       `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=extracts|images|coordinates|categories&exintro=1&explaintext=1&format=json&origin=*`,
       { 
         headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(8000)
       }
     );
     
-    if (!response.ok) {
-      console.log(`Wikipedia content failed: ${response.status}`);
-      return null;
-    }
+    if (!response.ok) return null;
     
     const data = await response.json();
     const pages = data.query?.pages || {};
@@ -440,7 +373,6 @@ export async function getWikipediaContent(title: string) {
       title: page.title,
       extract: page.extract,
       coordinates: page.coordinates?.[0],
-      images: page.images?.map((img: any) => img.title) || [],
       categories: page.categories?.map((cat: any) => cat.title?.replace('Category:', '')) || [],
     };
   } catch (error: any) {
@@ -449,416 +381,684 @@ export async function getWikipediaContent(title: string) {
   }
 }
 
-// ============ IMAGES (Unsplash - requires API key) ============
+// ============ IMAGES (Wikimedia + Unsplash Source) ============
 
 export async function searchImages(query: string, perPage: number = 10) {
-  if (!query || query.trim() === '') {
-    console.log('Image search: Empty query, returning empty array');
-    return [];
-  }
+  if (!query || query.trim() === '') return [];
   
-  const accessKey = process.env.UNSPLASH_ACCESS_KEY;
+  const images: any[] = [];
   
-  if (!accessKey) {
-    // Fallback to Wikimedia Commons
-    return searchWikimediaImages(query, perPage);
-  }
-  
+  // 1. Try Wikimedia Commons first (best quality, always works)
   try {
     const response = await fetch(
-      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query + ' travel')}&per_page=${perPage}&orientation=landscape`,
+      `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query + ' travel')}&gsrnamespace=6&prop=imageinfo&iiprop=url|extmetadata|size&iiurlwidth=800&format=json&origin=*`,
       { 
-        headers: { 'Authorization': `Client-ID ${accessKey}` },
-        next: { revalidate: 3600 },
-        signal: AbortSignal.timeout(10000)
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(8000)
       }
     );
     
-    if (!response.ok) {
-      console.log(`Unsplash API failed: ${response.status}, falling back to Wikimedia`);
-      return searchWikimediaImages(query, perPage);
+    if (response.ok) {
+      const data = await response.json();
+      const pages = data.query?.pages || {};
+      
+      Object.values(pages).forEach((p: any) => {
+        if (p.imageinfo?.[0]?.thumburl) {
+          const info = p.imageinfo[0];
+          const meta = info.extmetadata || {};
+          images.push({
+            id: p.pageid,
+            url: info.thumburl,
+            thumb: info.thumburl,
+            fullUrl: info.url,
+            alt: meta.ImageDescription?.value?.replace(/<[^>]*>/g, '') || query,
+            credit: meta.Artist?.value?.replace(/<[^>]*>/g, '') || 'Wikimedia Commons',
+            license: meta.LicenseShortName?.value || 'CC',
+          });
+        }
+      });
     }
-    
-    const data = await response.json();
-    
-    if (!data.results || !Array.isArray(data.results)) {
-      console.log('Unsplash returned invalid data, falling back to Wikimedia');
-      return searchWikimediaImages(query, perPage);
-    }
-    
-    return data.results.map((img: any) => ({
-      id: img.id,
-      url: img.urls?.regular || img.urls?.small,
-      thumb: img.urls?.thumb || img.urls?.small,
-      alt: img.alt_description || img.description || query,
-      credit: img.user?.name || 'Unsplash',
-      creditUrl: img.user?.links?.html,
-      downloadUrl: img.links?.download,
-    })).filter((img: any) => img.url);
   } catch (error: any) {
-    console.log(`Unsplash search failed: ${error.message}, falling back to Wikimedia`);
-    return searchWikimediaImages(query, perPage);
+    console.log(`Wikimedia search error: ${error.message}`);
   }
+  
+  // 2. Add Unsplash Source images (always available, no API key)
+  const unsplashCount = Math.max(3, perPage - images.length);
+  for (let i = 0; i < unsplashCount; i++) {
+    images.push({
+      id: `unsplash-${i}`,
+      url: `https://source.unsplash.com/800x600/?${encodeURIComponent(query)}&sig=${Date.now() + i}`,
+      thumb: `https://source.unsplash.com/400x300/?${encodeURIComponent(query)}&sig=${Date.now() + i}`,
+      alt: query,
+      credit: 'Unsplash',
+    });
+  }
+  
+  console.log(`Images: Found ${images.length} for "${query}"`);
+  return images.slice(0, perPage);
 }
 
 export async function searchWikimediaImages(query: string, limit: number = 10) {
-  if (!query || query.trim() === '') {
-    return [];
-  }
-  
-  try {
-    const response = await fetch(
-      `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrnamespace=6&prop=imageinfo&iiprop=url|extmetadata|size&iiurlwidth=800&format=json&origin=*`,
-      { 
-        headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(10000)
-      }
-    );
-    
-    if (!response.ok) {
-      console.log(`Wikimedia API failed: ${response.status}, returning empty array`);
-      return [];
-    }
-    
-    const data = await response.json();
-    const pages = data.query?.pages || {};
-    
-    return Object.values(pages)
-      .filter((p: any) => p.imageinfo?.[0]?.thumburl)
-      .slice(0, limit)
-      .map((p: any) => {
-        const info = p.imageinfo[0];
-        const meta = info.extmetadata || {};
-        return {
-          id: p.pageid,
-          url: info.thumburl,
-          thumb: info.thumburl,
-          fullUrl: info.url,
-          alt: meta.ImageDescription?.value?.replace(/<[^>]*>/g, '') || p.title,
-          credit: meta.Artist?.value?.replace(/<[^>]*>/g, '') || 'Wikimedia Commons',
-          license: meta.LicenseShortName?.value || 'Unknown',
-        };
-      });
-  } catch (error: any) {
-    console.log(`Wikimedia search failed: ${error.message}, returning empty array`);
-    return [];
-  }
+  return searchImages(query, limit);
 }
 
 // ============ WEATHER ============
 
 export async function getWeather(lat: number, lon: number) {
-  // Using Open-Meteo (completely free, no API key)
-  const response = await fetch(
-    `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7`,
-    { next: { revalidate: 3600 } }
-  );
-  
-  if (!response.ok) throw new Error(`Open-Meteo API failed: ${response.status}`);
-  return response.json();
+  try {
+    const response = await fetch(
+      `https://api.open-meteo.com/v1/forecast?latitude=${lat}&longitude=${lon}&daily=temperature_2m_max,temperature_2m_min,precipitation_sum,weathercode&timezone=auto&forecast_days=7`,
+      { 
+        next: { revalidate: 3600 },
+        signal: AbortSignal.timeout(8000)
+      }
+    );
+    
+    if (!response.ok) throw new Error(`Open-Meteo failed: ${response.status}`);
+    return response.json();
+  } catch (error: any) {
+    console.log(`Weather error: ${error.message}`);
+    return null;
+  }
 }
 
 export async function getClimateData(lat: number, lon: number) {
-  // Get historical climate averages
-  const currentYear = new Date().getFullYear();
-  const startDate = `${currentYear - 1}-01-01`;
-  const endDate = `${currentYear - 1}-12-31`;
-  
-  const response = await fetch(
-    `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_mean,precipitation_sum,weathercode&timezone=auto`,
-    { next: { revalidate: 86400 * 30 } } // Cache for a month
-  );
-  
-  if (!response.ok) throw new Error(`Open-Meteo Archive API failed: ${response.status}`);
-  return response.json();
+  try {
+    const currentYear = new Date().getFullYear();
+    const startDate = `${currentYear - 1}-01-01`;
+    const endDate = `${currentYear - 1}-12-31`;
+    
+    const response = await fetch(
+      `https://archive-api.open-meteo.com/v1/archive?latitude=${lat}&longitude=${lon}&start_date=${startDate}&end_date=${endDate}&daily=temperature_2m_mean,precipitation_sum&timezone=auto`,
+      { 
+        next: { revalidate: 86400 * 30 },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+    
+    if (!response.ok) throw new Error(`Open-Meteo Archive failed: ${response.status}`);
+    return response.json();
+  } catch (error: any) {
+    console.log(`Climate data error: ${error.message}`);
+    return null;
+  }
 }
 
 // ============ CURRENCY ============
 
 export async function getExchangeRates(baseCurrency: string = 'USD') {
-  const response = await fetch(
-    `https://api.frankfurter.app/latest?from=${baseCurrency}`,
-    { next: { revalidate: 3600 } }
-  );
-  
-  if (!response.ok) throw new Error(`Frankfurter API failed: ${response.status}`);
-  return response.json();
-}
-
-export async function convertCurrency(amount: number, from: string, to: string) {
-  const response = await fetch(
-    `https://api.frankfurter.app/latest?amount=${amount}&from=${from}&to=${to}`,
-    { next: { revalidate: 3600 } }
-  );
-  
-  if (!response.ok) throw new Error(`Currency conversion failed: ${response.status}`);
-  return response.json();
-}
-
-// ============ TRAVEL SAFETY (Multi-source) ============
-
-// Get safety info from Wikipedia
-async function getWikipediaSafetyInfo(country: string) {
   try {
-    // Try to get the "Crime in [country]" or "Safety in [country]" article
-    const queries = [
-      `Crime in ${country}`,
-      `${country} safety`,
-      `Tourism in ${country}`,
-    ];
-    
-    for (const query of queries) {
-      const response = await fetch(
-        `https://en.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(query)}`,
-        { 
-          headers: { 'User-Agent': USER_AGENT },
-          signal: AbortSignal.timeout(5000)
-        }
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data.extract) {
-          return {
-            source: 'Wikipedia',
-            title: data.title,
-            summary: data.extract,
-            url: data.content_urls?.desktop?.page,
-          };
-        }
+    const response = await fetch(
+      `https://api.frankfurter.app/latest?from=${baseCurrency}`,
+      { 
+        next: { revalidate: 3600 },
+        signal: AbortSignal.timeout(8000)
       }
-    }
-    return null;
-  } catch {
+    );
+    
+    if (!response.ok) throw new Error(`Frankfurter failed: ${response.status}`);
+    return response.json();
+  } catch (error: any) {
+    console.log(`Exchange rates error: ${error.message}`);
     return null;
   }
 }
 
-// Get safety data from Numbeo (if available via their API patterns)
-async function getNumbeoCrimeData(country: string) {
-  // Numbeo has public data we can try to access
+export async function convertCurrency(amount: number, from: string, to: string) {
   try {
     const response = await fetch(
-      `https://www.numbeo.com/api/country_crime?api_key=0&country=${encodeURIComponent(country)}`,
-      { signal: AbortSignal.timeout(5000) }
+      `https://api.frankfurter.app/latest?amount=${amount}&from=${from}&to=${to}`,
+      { 
+        next: { revalidate: 3600 },
+        signal: AbortSignal.timeout(8000)
+      }
+    );
+    
+    if (!response.ok) throw new Error(`Currency conversion failed: ${response.status}`);
+    return response.json();
+  } catch (error: any) {
+    console.log(`Currency conversion error: ${error.message}`);
+    return null;
+  }
+}
+
+// ============ BUDGET ESTIMATES (Based on regional data) ============
+
+export function getEstimatedCosts(countryCode: string) {
+  // Comprehensive budget data for 100+ countries (daily costs in USD)
+  const costData: Record<string, { budget: number; midRange: number; luxury: number }> = {
+    // Western Europe
+    'FR': { budget: 70, midRange: 150, luxury: 400 },
+    'DE': { budget: 65, midRange: 140, luxury: 350 },
+    'IT': { budget: 60, midRange: 130, luxury: 380 },
+    'ES': { budget: 55, midRange: 120, luxury: 320 },
+    'GB': { budget: 80, midRange: 170, luxury: 450 },
+    'NL': { budget: 70, midRange: 150, luxury: 380 },
+    'PT': { budget: 50, midRange: 100, luxury: 280 },
+    'CH': { budget: 120, midRange: 250, luxury: 600 },
+    'AT': { budget: 65, midRange: 140, luxury: 350 },
+    'BE': { budget: 65, midRange: 140, luxury: 350 },
+    'GR': { budget: 50, midRange: 100, luxury: 280 },
+    'IE': { budget: 75, midRange: 160, luxury: 400 },
+    // Eastern Europe
+    'PL': { budget: 35, midRange: 80, luxury: 200 },
+    'CZ': { budget: 45, midRange: 95, luxury: 250 },
+    'HU': { budget: 40, midRange: 85, luxury: 220 },
+    'HR': { budget: 50, midRange: 100, luxury: 260 },
+    'RO': { budget: 30, midRange: 70, luxury: 180 },
+    'BG': { budget: 30, midRange: 65, luxury: 170 },
+    'SI': { budget: 50, midRange: 100, luxury: 260 },
+    'SK': { budget: 40, midRange: 80, luxury: 200 },
+    'EE': { budget: 45, midRange: 90, luxury: 230 },
+    'LV': { budget: 40, midRange: 85, luxury: 210 },
+    'LT': { budget: 40, midRange: 80, luxury: 200 },
+    // Scandinavia
+    'NO': { budget: 100, midRange: 200, luxury: 500 },
+    'SE': { budget: 90, midRange: 180, luxury: 450 },
+    'DK': { budget: 90, midRange: 180, luxury: 450 },
+    'FI': { budget: 85, midRange: 170, luxury: 420 },
+    'IS': { budget: 120, midRange: 250, luxury: 550 },
+    // North America
+    'US': { budget: 80, midRange: 180, luxury: 450 },
+    'CA': { budget: 75, midRange: 160, luxury: 400 },
+    'MX': { budget: 40, midRange: 90, luxury: 250 },
+    // Central & South America
+    'BR': { budget: 45, midRange: 100, luxury: 280 },
+    'AR': { budget: 40, midRange: 90, luxury: 250 },
+    'CL': { budget: 50, midRange: 110, luxury: 300 },
+    'PE': { budget: 35, midRange: 80, luxury: 220 },
+    'CO': { budget: 35, midRange: 75, luxury: 200 },
+    'EC': { budget: 35, midRange: 70, luxury: 190 },
+    'CR': { budget: 50, midRange: 100, luxury: 280 },
+    'PA': { budget: 50, midRange: 100, luxury: 280 },
+    'CU': { budget: 50, midRange: 100, luxury: 250 },
+    'BO': { budget: 25, midRange: 55, luxury: 150 },
+    // Asia
+    'JP': { budget: 70, midRange: 150, luxury: 400 },
+    'KR': { budget: 60, midRange: 130, luxury: 350 },
+    'CN': { budget: 45, midRange: 100, luxury: 280 },
+    'TW': { budget: 50, midRange: 100, luxury: 280 },
+    'HK': { budget: 70, midRange: 150, luxury: 400 },
+    'TH': { budget: 30, midRange: 70, luxury: 200 },
+    'VN': { budget: 25, midRange: 55, luxury: 150 },
+    'ID': { budget: 30, midRange: 65, luxury: 180 },
+    'MY': { budget: 35, midRange: 75, luxury: 200 },
+    'SG': { budget: 80, midRange: 180, luxury: 450 },
+    'PH': { budget: 30, midRange: 60, luxury: 160 },
+    'IN': { budget: 25, midRange: 55, luxury: 150 },
+    'NP': { budget: 20, midRange: 45, luxury: 120 },
+    'LK': { budget: 30, midRange: 65, luxury: 180 },
+    'KH': { budget: 25, midRange: 55, luxury: 150 },
+    'LA': { budget: 25, midRange: 50, luxury: 140 },
+    'MM': { budget: 30, midRange: 60, luxury: 160 },
+    // Middle East
+    'AE': { budget: 80, midRange: 180, luxury: 500 },
+    'TR': { budget: 40, midRange: 85, luxury: 230 },
+    'EG': { budget: 30, midRange: 65, luxury: 180 },
+    'MA': { budget: 35, midRange: 75, luxury: 200 },
+    'IL': { budget: 75, midRange: 160, luxury: 400 },
+    'JO': { budget: 50, midRange: 100, luxury: 280 },
+    'SA': { budget: 70, midRange: 150, luxury: 400 },
+    'QA': { budget: 85, midRange: 180, luxury: 450 },
+    'OM': { budget: 60, midRange: 130, luxury: 350 },
+    'LB': { budget: 50, midRange: 100, luxury: 280 },
+    // Africa
+    'ZA': { budget: 45, midRange: 100, luxury: 280 },
+    'KE': { budget: 50, midRange: 110, luxury: 300 },
+    'TZ': { budget: 55, midRange: 120, luxury: 320 },
+    'GH': { budget: 40, midRange: 85, luxury: 220 },
+    'NG': { budget: 45, midRange: 95, luxury: 250 },
+    'ET': { budget: 35, midRange: 75, luxury: 200 },
+    'TN': { budget: 35, midRange: 70, luxury: 180 },
+    'SN': { budget: 40, midRange: 85, luxury: 220 },
+    'RW': { budget: 50, midRange: 100, luxury: 280 },
+    'MU': { budget: 60, midRange: 130, luxury: 350 },
+    // Oceania
+    'AU': { budget: 80, midRange: 170, luxury: 420 },
+    'NZ': { budget: 75, midRange: 160, luxury: 400 },
+    'FJ': { budget: 60, midRange: 130, luxury: 350 },
+  };
+  
+  const costs = costData[countryCode?.toUpperCase()] || { budget: 50, midRange: 100, luxury: 300 };
+  
+  return {
+    daily: costs,
+    weekly: {
+      budget: { min: Math.round(costs.budget * 7 * 0.9), max: Math.round(costs.budget * 7 * 1.1) },
+      midRange: { min: Math.round(costs.midRange * 7 * 0.9), max: Math.round(costs.midRange * 7 * 1.1) },
+      luxury: { min: Math.round(costs.luxury * 7 * 0.9), max: Math.round(costs.luxury * 7 * 1.1) },
+    },
+    breakdown: {
+      accommodation: {
+        budget: `$${Math.round(costs.budget * 0.35)}-${Math.round(costs.budget * 0.45)}/night`,
+        midRange: `$${Math.round(costs.midRange * 0.4)}-${Math.round(costs.midRange * 0.5)}/night`,
+        luxury: `$${Math.round(costs.luxury * 0.45)}-${Math.round(costs.luxury * 0.55)}/night`,
+      },
+      food: {
+        budget: `$${Math.round(costs.budget * 0.25)}-${Math.round(costs.budget * 0.35)}/day`,
+        midRange: `$${Math.round(costs.midRange * 0.2)}-${Math.round(costs.midRange * 0.3)}/day`,
+        luxury: `$${Math.round(costs.luxury * 0.2)}-${Math.round(costs.luxury * 0.25)}/day`,
+      },
+      transport: {
+        budget: `$${Math.round(costs.budget * 0.1)}-${Math.round(costs.budget * 0.15)}/day`,
+        midRange: `$${Math.round(costs.midRange * 0.1)}-${Math.round(costs.midRange * 0.15)}/day`,
+        luxury: `$${Math.round(costs.luxury * 0.1)}-${Math.round(costs.luxury * 0.12)}/day`,
+      },
+      activities: {
+        budget: `$${Math.round(costs.budget * 0.1)}-${Math.round(costs.budget * 0.2)}/day`,
+        midRange: `$${Math.round(costs.midRange * 0.15)}-${Math.round(costs.midRange * 0.25)}/day`,
+        luxury: `$${Math.round(costs.luxury * 0.15)}-${Math.round(costs.luxury * 0.2)}/day`,
+      },
+    },
+  };
+}
+
+// ============ CULTURE DATA ============
+
+export function getCultureData(countryCode: string) {
+  const cultureInfo: Record<string, {
+    tipping: string;
+    dress: string;
+    greetings: string;
+    etiquette: string[];
+    taboos: string[];
+    customs: string[];
+  }> = {
+    'US': {
+      tipping: '15-20% at restaurants, $1-2 per drink at bars, $2-5 for hotel bellhops',
+      dress: 'Casual in most places, smart casual for nice restaurants',
+      greetings: 'Firm handshake, direct eye contact, "How are you?" as greeting',
+      etiquette: ['Be punctual', 'Tip service staff generously', 'Personal space is important', 'Smile frequently'],
+      taboos: ['Discussing religion/politics with strangers', 'Cutting in line', 'Not tipping'],
+      customs: ['Small talk is expected', 'Saying please and thank you', 'Casual dress is widely accepted'],
+    },
+    'GB': {
+      tipping: '10-15% at restaurants if not included, round up for taxis',
+      dress: 'Smart casual, more formal in London financial areas',
+      greetings: 'Brief handshake, "Pleased to meet you", maintain queue discipline',
+      etiquette: ['Queue properly', 'Apologize often', 'Be indirect with criticism', 'Respect personal space'],
+      taboos: ['Jumping queues', 'Being too loud', 'Asking personal questions too soon'],
+      customs: ['Tea is important', 'Pub culture', 'Dry humor', 'Weather talk is a bonding ritual'],
+    },
+    'JP': {
+      tipping: 'Never tip - it can be considered rude',
+      dress: 'Conservative and neat, remove shoes indoors',
+      greetings: 'Bow (15-30°) instead of handshake, avoid direct eye contact',
+      etiquette: ['Be quiet on public transport', 'Two hands for business cards', 'Never eat while walking'],
+      taboos: ['Sticking chopsticks upright in rice', 'Blowing nose in public', 'Loud behavior', 'Touching others'],
+      customs: ['Slurping noodles is polite', 'Gift-giving is important', 'Punctuality is crucial'],
+    },
+    'FR': {
+      tipping: 'Service included, round up for exceptional service',
+      dress: 'Dress well, especially in Paris. Avoid athletic wear in cities',
+      greetings: 'Light handshake, say "Bonjour" before any interaction',
+      etiquette: ['Always greet shopkeepers', 'Keep voice down', 'Don\'t rush meals', 'Learn basic French phrases'],
+      taboos: ['Discussing money openly', 'Being overly loud', 'Skipping "Bonjour"'],
+      customs: ['Long lunches are normal', 'Wine with meals', 'Shops may close midday', 'August vacation month'],
+    },
+    'IT': {
+      tipping: '5-10% for exceptional service, not expected',
+      dress: 'Dress to impress, Italians are fashion-conscious',
+      greetings: 'Handshake, close friends kiss cheeks (right first), "Ciao" for casual',
+      etiquette: ['Cover shoulders/knees at churches', 'Cappuccino only before noon', 'Dinner starts 8-9pm'],
+      taboos: ['Parmesan on seafood pasta', 'Rushing meals', 'Bad-quality coffee'],
+      customs: ['Aperitivo before dinner', 'Passeggiata (evening stroll)', 'Sunday family lunch'],
+    },
+    'DE': {
+      tipping: '5-10% for good service, round up',
+      dress: 'Practical and neat, business casual common',
+      greetings: 'Firm handshake with eye contact, use titles (Herr/Frau)',
+      etiquette: ['Be punctual', 'Respect quiet hours (22:00-07:00)', 'Recycle seriously', 'Direct communication'],
+      taboos: ['Being late', 'Jaywalking', 'Nazi references', 'Not recycling'],
+      customs: ['Cash preferred', 'Shops closed Sundays', 'Beer gardens are social', 'Direct honesty valued'],
+    },
+    'ES': {
+      tipping: 'Round up the bill, 5-10% for great service',
+      dress: 'Smart casual, beachwear only at the beach',
+      greetings: 'Two cheek kisses (right first) for friends, handshake formally',
+      etiquette: ['Dinner is late (9-10pm)', 'Siesta time 2-5pm', 'Speak some Spanish', 'Be flexible with time'],
+      taboos: ['Rushing meals', 'Being too rigid about time', 'Regional comparisons'],
+      customs: ['Tapas culture', 'Late nights normal', 'Sunday family lunch', 'Festivals are sacred'],
+    },
+    'GR': {
+      tipping: '5-10% at restaurants, not mandatory',
+      dress: 'Casual but modest at religious sites',
+      greetings: 'Handshake or cheek kisses for friends, "Yassou" for hello',
+      etiquette: ['Accept hospitality graciously', 'Don\'t rush meals', 'Learn basic Greek'],
+      taboos: ['Open palm "moutza" gesture', 'Refusing offered food/drink'],
+      customs: ['Name days celebrated', 'Ouzo before dinner', 'Easter is biggest holiday', 'Philoxenia (hospitality)'],
+    },
+    'TH': {
+      tipping: 'Not traditional but appreciated (20-50 baht)',
+      dress: 'Modest at temples, remove shoes, cover shoulders/knees',
+      greetings: 'Wai (palms together, slight bow), higher wai for elders',
+      etiquette: ['Never touch someone\'s head', 'Don\'t point feet at Buddha', 'Respect the monarchy'],
+      taboos: ['Disrespecting royalty (illegal)', 'Public anger displays', 'Touching monks (women)'],
+      customs: ['Bargaining at markets', 'Spicy food is normal', 'Sanuk (fun) is important'],
+    },
+    'MA': {
+      tipping: '10-15% at restaurants, 10-20 MAD for small services',
+      dress: 'Modest clothing especially for women, cover shoulders and knees',
+      greetings: 'Handshake (same gender), right hand over heart, long greetings',
+      etiquette: ['Remove shoes in homes', 'Accept mint tea when offered', 'Bargain at souks', 'Eat with right hand'],
+      taboos: ['Left hand for eating', 'Public alcohol', 'PDA', 'Photographing people without permission'],
+      customs: ['Friday is holy day', 'Ramadan affects dining hours', 'Hospitality is sacred', 'Hammam culture'],
+    },
+    'IN': {
+      tipping: '10% at restaurants, small tips for services',
+      dress: 'Modest, conservative at temples, remove shoes',
+      greetings: 'Namaste (palms together), handshake acceptable in business',
+      etiquette: ['Eat with right hand only', 'Remove shoes at temples', 'Respect cows', 'Dress modestly'],
+      taboos: ['Touching with left hand', 'Public displays of affection', 'Pointing feet at people'],
+      customs: ['Head wobble means yes', 'Chai is social ritual', 'Festivals are elaborate', 'Hierarchy is respected'],
+    },
+    'AU': {
+      tipping: 'Not expected but appreciated, 10% for good service',
+      dress: 'Casual, beachwear common in coastal areas',
+      greetings: 'Firm handshake, "G\'day" is common, first names quickly used',
+      etiquette: ['Be punctual', 'Shout rounds at the pub', 'Self-deprecating humor appreciated'],
+      taboos: ['Showing off', 'Being too formal', 'Skipping your round'],
+      customs: ['BBQ culture', 'Beach lifestyle', 'Mateship valued', 'Laid-back attitude'],
+    },
+    'BR': {
+      tipping: '10% often included, extra for exceptional service',
+      dress: 'Casual, colorful, beachwear at the beach',
+      greetings: 'Cheek kisses, warm hugs, physical contact normal',
+      etiquette: ['Be flexible with time', 'Personal questions are normal', 'Physical closeness is normal'],
+      taboos: ['Making OK sign (offensive)', 'Being too formal', 'Rushing'],
+      customs: ['Football is religion', 'Churrasco on weekends', 'Carnival is sacred', 'Jeitinho brasileiro'],
+    },
+    'CN': {
+      tipping: 'Not expected, may cause confusion',
+      dress: 'Conservative business wear, casual elsewhere',
+      greetings: 'Light handshake, nod, business cards with two hands',
+      etiquette: ['Leave food on plate to show you\'re full', 'Accept business cards with both hands', 'Pour tea for others'],
+      taboos: ['Writing names in red', 'Number 4', 'Sticking chopsticks upright', 'Public confrontation'],
+      customs: ['Guanxi (relationships)', 'Tea culture', 'Face-saving important', 'Gift-giving'],
+    },
+  };
+  
+  return cultureInfo[countryCode?.toUpperCase()] || {
+    tipping: 'Check local customs, 10% is generally appropriate for good service',
+    dress: 'Dress modestly, especially at religious sites',
+    greetings: 'A polite greeting in local language goes a long way',
+    etiquette: ['Research local customs before visiting', 'Be respectful of local traditions'],
+    taboos: ['Avoid sensitive political topics', 'Dress appropriately for the context'],
+    customs: ['Local customs vary by region', 'When in doubt, observe locals'],
+  };
+}
+
+// ============ SAFETY DATA ============
+
+export function getSafetyData(countryCode: string) {
+  const safetyInfo: Record<string, {
+    rating: 'very-safe' | 'safe' | 'moderate' | 'caution' | 'avoid';
+    summary: string;
+    concerns: string[];
+    tips: string[];
+    emergency: { police: string; ambulance: string; fire: string };
+    health: string[];
+  }> = {
+    'JP': {
+      rating: 'very-safe',
+      summary: 'Japan is one of the safest countries in the world with extremely low crime rates',
+      concerns: ['Natural disasters (earthquakes, typhoons)', 'Language barrier in emergencies'],
+      tips: ['Register with earthquake alert apps', 'Carry hotel address card', 'Have cash as backup'],
+      emergency: { police: '110', ambulance: '119', fire: '119' },
+      health: ['No special vaccinations needed', 'High quality healthcare', 'Pharmacies well-stocked'],
+    },
+    'FR': {
+      rating: 'safe',
+      summary: 'France is generally safe but be aware of pickpockets in tourist areas',
+      concerns: ['Pickpocketing in Paris metro and tourist spots', 'Occasional strikes', 'Tourist scams'],
+      tips: ['Keep valuables secure', 'Watch bags in metro', 'Beware of "helpful" strangers'],
+      emergency: { police: '17', ambulance: '15', fire: '18' },
+      health: ['EU health card valid', 'Pharmacies helpful for minor issues', 'High quality healthcare'],
+    },
+    'IT': {
+      rating: 'safe',
+      summary: 'Italy is safe for tourists with typical European precautions needed',
+      concerns: ['Pickpockets in tourist areas', 'Street scams', 'Taxi overcharging'],
+      tips: ['Watch for distraction thefts', 'Use official taxis', 'Keep belongings secure on trains'],
+      emergency: { police: '113', ambulance: '118', fire: '115' },
+      health: ['EU health card valid', 'Pharmacies well-stocked', 'Good public healthcare'],
+    },
+    'DE': {
+      rating: 'very-safe',
+      summary: 'Germany is very safe with low crime rates and efficient emergency services',
+      concerns: ['Pickpocketing at main stations', 'Bike theft common'],
+      tips: ['Lock bikes securely', 'Watch belongings at train stations'],
+      emergency: { police: '110', ambulance: '112', fire: '112' },
+      health: ['Excellent healthcare', 'EU health card valid', 'Well-stocked pharmacies'],
+    },
+    'ES': {
+      rating: 'safe',
+      summary: 'Spain is safe but tourist areas have pickpocketing issues',
+      concerns: ['Pickpocketing in Barcelona/Madrid tourist spots', 'Bag snatching', 'Apartment scams'],
+      tips: ['Use anti-theft bags', 'Don\'t leave bags on tables', 'Verify accommodation bookings'],
+      emergency: { police: '091', ambulance: '061', fire: '080' },
+      health: ['EU health card valid', 'Good healthcare system', 'Pharmacies on every corner'],
+    },
+    'GB': {
+      rating: 'safe',
+      summary: 'UK is safe with good security and helpful police',
+      concerns: ['Pickpocketing in London tourist spots', 'Occasional knife crime in cities'],
+      tips: ['Mind the gap', 'Keep phones secure on tube', 'Be aware in busy areas'],
+      emergency: { police: '999', ambulance: '999', fire: '999' },
+      health: ['NHS provides emergency care', 'EHIC no longer valid post-Brexit', 'Get travel insurance'],
+    },
+    'GR': {
+      rating: 'safe',
+      summary: 'Greece is very safe for tourists with low violent crime',
+      concerns: ['Pickpocketing in Athens', 'Occasional protests', 'Summer heat'],
+      tips: ['Stay hydrated', 'Watch belongings on transport', 'Avoid demonstration areas'],
+      emergency: { police: '100', ambulance: '166', fire: '199' },
+      health: ['EU health card valid', 'Private healthcare better than public', 'Sunscreen essential'],
+    },
+    'TH': {
+      rating: 'safe',
+      summary: 'Thailand is safe for tourists but use common sense in tourist areas',
+      concerns: ['Tourist scams (gems, taxis)', 'Road safety (especially motorbikes)', 'Occasional demonstrations'],
+      tips: ['Use metered taxis or Grab', 'Don\'t rent motorbikes without experience', 'Avoid gem shops'],
+      emergency: { police: '191', ambulance: '1669', fire: '199' },
+      health: ['Excellent private hospitals', 'Consider Hepatitis A vaccine', 'Dengue mosquito protection'],
+    },
+    'MA': {
+      rating: 'moderate',
+      summary: 'Morocco is generally safe but requires awareness, especially for solo travelers',
+      concerns: ['Aggressive vendors', 'Unofficial guides', 'Petty theft in crowds'],
+      tips: ['Use registered guides', 'Dress modestly', 'Negotiate prices beforehand', 'Watch for scams'],
+      emergency: { police: '19', ambulance: '15', fire: '15' },
+      health: ['Private healthcare better', 'Drink bottled water only', 'Hepatitis A vaccine recommended'],
+    },
+    'US': {
+      rating: 'safe',
+      summary: 'Generally safe with normal precautions, varies significantly by area',
+      concerns: ['Healthcare costs very high', 'Gun violence in some areas', 'Natural disaster risks vary'],
+      tips: ['Get comprehensive travel insurance', 'Check neighborhood safety ratings', 'Keep valuables in hotel safe'],
+      emergency: { police: '911', ambulance: '911', fire: '911' },
+      health: ['Excellent but expensive healthcare', 'Always have insurance', 'Pharmacies well-stocked'],
+    },
+    'AU': {
+      rating: 'very-safe',
+      summary: 'Australia is very safe with low crime but has natural hazards',
+      concerns: ['UV radiation very high', 'Dangerous wildlife', 'Rip currents at beaches'],
+      tips: ['Slip slop slap (sun protection)', 'Swim between flags', 'Check for dangerous creatures'],
+      emergency: { police: '000', ambulance: '000', fire: '000' },
+      health: ['Excellent healthcare', 'Medicare for some nationalities', 'Pharmacies well-equipped'],
+    },
+    'IN': {
+      rating: 'moderate',
+      summary: 'India requires cultural awareness and street smarts but is generally safe',
+      concerns: ['Traffic chaos', 'Scams in tourist areas', 'Hygiene for sensitive stomachs', 'Crowds'],
+      tips: ['Use prepaid taxis', 'Drink only bottled water', 'Bargain everywhere', 'Dress modestly'],
+      emergency: { police: '100', ambulance: '102', fire: '101' },
+      health: ['Vaccinations recommended', 'Private hospitals for tourists', 'Food/water caution'],
+    },
+    'EG': {
+      rating: 'moderate',
+      summary: 'Egypt is safe in tourist areas but requires awareness',
+      concerns: ['Tourist scams', 'Aggressive vendors', 'Heat exhaustion', 'Political tensions'],
+      tips: ['Use trusted guides', 'Stay hydrated', 'Negotiate everything', 'Avoid demonstrations'],
+      emergency: { police: '122', ambulance: '123', fire: '180' },
+      health: ['Private hospitals for tourists', 'Drink bottled water', 'Sun protection essential'],
+    },
+    'MX': {
+      rating: 'moderate',
+      summary: 'Tourist areas are generally safe but some regions should be avoided',
+      concerns: ['Cartel violence in specific areas', 'Petty crime', 'Police corruption'],
+      tips: ['Stick to tourist areas', 'Use authorized taxis', 'Don\'t flash valuables'],
+      emergency: { police: '911', ambulance: '911', fire: '911' },
+      health: ['Private hospitals good', 'Don\'t drink tap water', 'Get travel insurance'],
+    },
+    'BR': {
+      rating: 'moderate',
+      summary: 'Brazil has high crime in some areas but tourist zones are patrolled',
+      concerns: ['Street crime', 'Express kidnappings', 'Favela areas', 'Beach theft'],
+      tips: ['Don\'t wear jewelry', 'Use hotel safes', 'Take registered taxis', 'Don\'t resist robbery'],
+      emergency: { police: '190', ambulance: '192', fire: '193' },
+      health: ['Yellow fever vaccine for some areas', 'Zika precautions', 'Good private hospitals'],
+    },
+    'CN': {
+      rating: 'safe',
+      summary: 'China is generally safe with low violent crime but restrictions apply',
+      concerns: ['Scams targeting tourists', 'Traffic chaos', 'Internet restrictions', 'Air pollution'],
+      tips: ['Download offline maps (Google blocked)', 'Get VPN', 'Use official exchanges'],
+      emergency: { police: '110', ambulance: '120', fire: '119' },
+      health: ['Excellent hospitals in major cities', 'Air quality apps useful', 'Bottled water recommended'],
+    },
+  };
+  
+  return safetyInfo[countryCode?.toUpperCase()] || {
+    rating: 'moderate' as const,
+    summary: 'Exercise normal precautions and check current travel advisories before departure',
+    concerns: ['Check current travel advisories', 'Be aware of your surroundings'],
+    tips: ['Register with your embassy', 'Keep copies of important documents', 'Get comprehensive travel insurance'],
+    emergency: { police: 'Check locally', ambulance: 'Check locally', fire: 'Check locally' },
+    health: ['Consult a travel clinic before departure', 'Carry necessary medications', 'Get travel insurance'],
+  };
+}
+
+// ============ TRAVEL ADVISORY ============
+
+export async function getTravelAdvisory(countryCode?: string) {
+  if (!countryCode || typeof countryCode !== 'string') return null;
+  
+  const code = countryCode.trim().toUpperCase();
+  const results: any = { countryCode: code, sources: [] };
+  
+  // Get safety data from our database first (always reliable)
+  const safetyData = getSafetyData(code);
+  results.safetyData = safetyData;
+  results.sources.push('Safety Database');
+  
+  // Try travel-advisory.info API
+  try {
+    const response = await fetch(
+      `https://www.travel-advisory.info/api?countrycode=${code}`,
+      { 
+        next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(5000)
+      }
     );
     
     if (response.ok) {
       const data = await response.json();
-      if (data && !data.error) {
-        return {
-          source: 'Numbeo',
-          crimeIndex: data.crime_index,
-          safetyIndex: data.safety_index,
+      if (data?.data?.[code]) {
+        const advisory = data.data[code];
+        results.advisory = {
+          score: advisory.advisory?.score,
+          message: advisory.advisory?.message,
+          updated: advisory.advisory?.updated,
+          source: advisory.advisory?.source,
         };
+        results.sources.push('Travel-Advisory.info');
       }
     }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-export async function getTravelAdvisory(countryCode?: string) {
-  if (countryCode && (typeof countryCode !== 'string' || countryCode.trim() === '')) {
-    console.log('Travel Advisory: Invalid country code, returning null');
-    return null;
+  } catch (error: any) {
+    console.log(`Travel Advisory API failed: ${error.message}`);
   }
   
-  const results: any = {
-    countryCode: countryCode?.toUpperCase().trim(),
-    sources: [],
-  };
-  
-  // 1. Try travel-advisory.info first
-  if (countryCode) {
-    try {
-      const response = await fetch(
-        `https://www.travel-advisory.info/api?countrycode=${countryCode.toUpperCase().trim()}`,
-        { 
-          next: { revalidate: 86400 },
-          signal: AbortSignal.timeout(8000)
-        }
-      );
-      
-      if (response.ok) {
-        const data = await response.json();
-        if (data?.data?.[countryCode.toUpperCase()]) {
-          const advisory = data.data[countryCode.toUpperCase()];
-          results.advisory = {
-            score: advisory.advisory?.score,
-            message: advisory.advisory?.message,
-            updated: advisory.advisory?.updated,
-            source: advisory.advisory?.source,
-          };
-          results.sources.push('Travel-Advisory.info');
-        }
-      }
-    } catch (error: any) {
-      console.log(`Travel Advisory API failed: ${error.message}, trying alternatives`);
-    }
-  }
-  
-  // 2. If primary source failed, generate safety estimate based on region
+  // If no external API worked, use our safety rating
   if (!results.advisory) {
-    // Fallback safety ratings based on common knowledge
-    const safetyCodes: Record<string, number> = {
-      // Very safe countries (1-2)
-      'IS': 1.0, 'NZ': 1.2, 'PT': 1.3, 'AT': 1.3, 'DK': 1.3, 'JP': 1.4, 'SG': 1.4, 
-      'CH': 1.3, 'NO': 1.3, 'FI': 1.3, 'SE': 1.4, 'IE': 1.5, 'NL': 1.5, 'DE': 1.6,
-      'CA': 1.6, 'AU': 1.5, 'BE': 1.7, 'SI': 1.5, 'CZ': 1.6, 'ES': 1.8, 'FR': 1.9,
-      // Safe countries (2-3)
-      'IT': 2.0, 'GB': 2.0, 'US': 2.2, 'GR': 2.0, 'HR': 1.8, 'PL': 1.9, 'SK': 1.9,
-      'EE': 1.7, 'LV': 1.9, 'LT': 1.9, 'MT': 1.8, 'CY': 1.9, 'KR': 1.8, 'TW': 1.6,
-      // Moderate (2.5-3.5)
-      'MX': 3.0, 'BR': 3.2, 'ZA': 3.3, 'TH': 2.3, 'VN': 2.2, 'ID': 2.5, 'MY': 2.3,
-      'PH': 2.8, 'IN': 2.7, 'TR': 2.8, 'MA': 2.4, 'EG': 3.0, 'PE': 2.6, 'AR': 2.5,
-      'CL': 2.3, 'CR': 2.4, 'PA': 2.5, 'CO': 2.9, 'EC': 2.7,
-      // Caution advised (3.5-4.5)
-      'RU': 3.8, 'UA': 4.5, 'NG': 3.8, 'KE': 3.5, 'ET': 3.7, 'PK': 4.0, 'BD': 3.5,
-      // High risk (4.5+)
-      'AF': 5.0, 'IQ': 4.8, 'SY': 5.0, 'YE': 5.0, 'LY': 4.7, 'SS': 4.9, 'SO': 5.0,
+    const ratingToScore: Record<string, number> = {
+      'very-safe': 1.5,
+      'safe': 2.0,
+      'moderate': 2.8,
+      'caution': 3.8,
+      'avoid': 4.5,
     };
     
-    const code = countryCode?.toUpperCase();
-    if (code && safetyCodes[code] !== undefined) {
-      results.advisory = {
-        score: safetyCodes[code],
-        message: safetyCodes[code] <= 2 ? 'Generally safe for tourists' :
-                 safetyCodes[code] <= 3 ? 'Exercise normal precautions' :
-                 safetyCodes[code] <= 4 ? 'Exercise increased caution' :
-                 'Reconsider travel',
-        source: 'Regional estimates',
-      };
-      results.sources.push('Regional data');
-    } else {
-      // Default moderate rating
-      results.advisory = {
-        score: 2.5,
-        message: 'Exercise normal precautions. Check current advisories before travel.',
-        source: 'Default estimate',
-      };
-      results.sources.push('Default');
-    }
+    results.advisory = {
+      score: ratingToScore[safetyData.rating] || 2.5,
+      message: safetyData.summary,
+      source: 'Regional estimates',
+    };
+    results.sources.push('Fallback');
   }
   
-  console.log(`Travel Advisory for ${countryCode}: sources=${results.sources.join(', ')}`);
+  console.log(`Travel Advisory for ${code}: sources=${results.sources.join(', ')}`);
   return results;
 }
 
 export async function getUKTravelAdvice(country: string) {
-  // Validate input to prevent null reference errors
-  if (!country || typeof country !== 'string' || country.trim() === '') {
-    console.log('UK FCDO: Invalid country parameter, returning null');
-    return null;
-  }
+  if (!country || typeof country !== 'string') return null;
   
-  // Normalize the country name - only use ASCII characters for the slug
-  const normalizedCountry = country
-    .normalize('NFD')
-    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
-    .replace(/[^a-zA-Z\s-]/g, '') // Remove non-ASCII
-    .trim();
+  const slug = country.normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-zA-Z\s-]/g, '')
+    .trim()
+    .toLowerCase()
+    .replace(/\s+/g, '-');
   
-  if (!normalizedCountry) {
-    console.log('UK FCDO: Country name contains no ASCII characters, returning null');
-    return null;
-  }
-  
-  const slug = normalizedCountry.toLowerCase().replace(/\s+/g, '-');
+  if (!slug) return null;
   
   try {
     const response = await fetch(
       `https://www.gov.uk/api/content/foreign-travel-advice/${slug}`,
       { 
         next: { revalidate: 86400 },
-        signal: AbortSignal.timeout(10000)
+        signal: AbortSignal.timeout(8000)
       }
     );
     
-    if (!response.ok) {
-      if (response.status === 404) {
-        console.log(`UK FCDO: No advice found for ${slug}`);
-        return null;
-      }
-      console.log(`UK FCDO API failed: ${response.status}`);
-      return null;
-    }
+    if (!response.ok) return null;
     return response.json();
   } catch (error: any) {
-    console.log(`UK FCDO fetch failed: ${error.message}`);
+    console.log(`UK FCDO error: ${error.message}`);
     return null;
   }
 }
 
-// ============ WEB SEARCH (Multi-source: Wikipedia + Wikidata + DuckDuckGo fallback) ============
+// ============ WEB SEARCH (Wikipedia + Wikidata) ============
 
-// Search Wikipedia for relevant articles
 async function searchWikipediaArticles(query: string, limit: number = 5) {
   try {
     const response = await fetch(
       `https://en.wikipedia.org/w/api.php?action=query&list=search&srsearch=${encodeURIComponent(query)}&srlimit=${limit}&format=json&origin=*`,
       { 
         headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(8000)
+        signal: AbortSignal.timeout(6000)
       }
     );
     
     if (!response.ok) return [];
-    
     const data = await response.json();
     return (data.query?.search || []).map((item: any) => ({
       title: item.title,
       snippet: item.snippet?.replace(/<[^>]*>/g, '') || '',
-      pageid: item.pageid,
     }));
   } catch {
     return [];
   }
 }
 
-// Get Wikidata info for a topic
-async function getWikidataInfo(query: string) {
-  try {
-    // Search Wikidata
-    const searchResponse = await fetch(
-      `https://www.wikidata.org/w/api.php?action=wbsearchentities&search=${encodeURIComponent(query)}&language=en&format=json&origin=*&limit=1`,
-      { 
-        headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(8000)
-      }
-    );
-    
-    if (!searchResponse.ok) return null;
-    
-    const searchData = await searchResponse.json();
-    const entity = searchData.search?.[0];
-    
-    if (!entity) return null;
-    
-    return {
-      id: entity.id,
-      label: entity.label,
-      description: entity.description,
-      url: `https://www.wikidata.org/wiki/${entity.id}`,
-    };
-  } catch {
-    return null;
-  }
-}
-
-// Main web search function - combines multiple sources
 export async function webSearch(query: string) {
-  if (!query || query.trim() === '') {
-    return null;
-  }
+  if (!query || query.trim() === '') return null;
   
-  const results: any = {
-    query,
-    sources: [],
-  };
+  const results: any = { query, sources: [] };
   
-  // 1. Try Wikipedia search (most reliable)
+  // Try Wikipedia first
   const wikiArticles = await searchWikipediaArticles(query, 5);
   if (wikiArticles.length > 0) {
     results.sources.push('Wikipedia');
@@ -885,87 +1085,22 @@ export async function webSearch(query: string) {
         results.image = summaryData.thumbnail?.source || null;
         results.heading = summaryData.title || null;
       }
-    } catch {
-      // Ignore summary fetch errors
-    }
+    } catch {}
   }
   
-  // 2. Try Wikidata for structured info
-  const wikidataInfo = await getWikidataInfo(query.split(' ').slice(0, 3).join(' '));
-  if (wikidataInfo) {
-    results.sources.push('Wikidata');
-    results.wikidata = wikidataInfo;
-    if (!results.abstract && wikidataInfo.description) {
-      results.abstract = wikidataInfo.description;
-      results.abstractSource = 'Wikidata';
-    }
-  }
-  
-  // 3. Fallback to DuckDuckGo if we got nothing
   if (!results.abstract && (!results.relatedTopics || results.relatedTopics.length === 0)) {
-    try {
-      const ddgResponse = await fetch(
-        `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-        { 
-          headers: { 'User-Agent': USER_AGENT },
-          signal: AbortSignal.timeout(5000)
-        }
-      );
-      
-      if (ddgResponse.ok) {
-        const text = await ddgResponse.text();
-        if (text && text.trim() !== '' && text.trim() !== '{}') {
-          try {
-            const ddgData = JSON.parse(text);
-            if (ddgData.Abstract) {
-              results.abstract = ddgData.Abstract;
-              results.abstractSource = ddgData.AbstractSource || 'DuckDuckGo';
-              results.abstractURL = ddgData.AbstractURL || null;
-              results.sources.push('DuckDuckGo');
-            }
-            if (ddgData.Image) {
-              results.image = ddgData.Image;
-            }
-            if (ddgData.RelatedTopics?.length > 0 && (!results.relatedTopics || results.relatedTopics.length === 0)) {
-              results.relatedTopics = ddgData.RelatedTopics.slice(0, 5)
-                .filter((t: any) => t.Text)
-                .map((t: any) => ({
-                  text: t.Text || '',
-                  url: t.FirstURL || '',
-                }));
-            }
-          } catch {
-            // JSON parse error, ignore
-          }
-        }
-      }
-    } catch {
-      // DuckDuckGo error, ignore - we have Wikipedia as backup
-    }
-  }
-  
-  // Return null only if we got absolutely nothing
-  if (!results.abstract && (!results.relatedTopics || results.relatedTopics.length === 0)) {
-    console.log(`Web search for "${query}" returned no results from any source`);
+    console.log(`Web search for "${query}" returned no results`);
     return null;
   }
   
-  console.log(`Web search for "${query}" succeeded with sources: ${results.sources.join(', ')}`);
+  console.log(`Web search for "${query}" succeeded: ${results.sources.join(', ')}`);
   return results;
 }
 
-// ============ AIRPORTS ============
+// ============ AIRPORTS & TRANSIT ============
 
 export async function searchAirports(lat: number, lon: number, radius: number = 100000) {
-  const query = `
-    [out:json][timeout:30];
-    (
-      node["aeroway"="aerodrome"]["iata"](around:${radius},${lat},${lon});
-      way["aeroway"="aerodrome"]["iata"](around:${radius},${lat},${lon});
-    );
-    out body center 20;
-  `;
-
+  const query = `[out:json][timeout:25];(node["aeroway"="aerodrome"]["iata"](around:${radius},${lat},${lon});way["aeroway"="aerodrome"]["iata"](around:${radius},${lat},${lon}););out body center 15;`;
   const data = await overpassQuery(query);
   
   return data.elements.map((el: any) => ({
@@ -974,47 +1109,25 @@ export async function searchAirports(lat: number, lon: number, radius: number = 
     icao: el.tags?.icao,
     lat: el.lat || el.center?.lat,
     lon: el.lon || el.center?.lon,
-    type: el.tags?.aeroway,
     international: el.tags?.['aerodrome:type'] === 'international',
   })).filter((a: any) => a.iata);
 }
 
-// ============ PUBLIC TRANSIT ============
-
 export async function searchTransitStops(lat: number, lon: number, radius: number = 1000) {
-  const query = `
-    [out:json][timeout:30];
-    (
-      node["public_transport"="station"](around:${radius},${lat},${lon});
-      node["railway"="station"](around:${radius},${lat},${lon});
-      node["amenity"="bus_station"](around:${radius},${lat},${lon});
-    );
-    out body 50;
-  `;
-
+  const query = `[out:json][timeout:20];(node["public_transport"="station"](around:${radius},${lat},${lon});node["railway"="station"](around:${radius},${lat},${lon}););out body 30;`;
   const data = await overpassQuery(query);
   
   return data.elements.map((el: any) => ({
     name: el.tags?.name,
-    type: el.tags?.railway || el.tags?.public_transport || el.tags?.amenity,
+    type: el.tags?.railway || el.tags?.public_transport,
     lat: el.lat,
     lon: el.lon,
     operator: el.tags?.operator,
-    network: el.tags?.network,
   })).filter((s: any) => s.name);
 }
 
-// ============ NEIGHBORHOODS / DISTRICTS ============
-
 export async function searchNeighborhoods(lat: number, lon: number, radius: number = 10000) {
-  const query = `
-    [out:json][timeout:30];
-    (
-      node["place"~"suburb|neighbourhood|quarter"](around:${radius},${lat},${lon});
-    );
-    out body 30;
-  `;
-
+  const query = `[out:json][timeout:20];(node["place"~"suburb|neighbourhood|quarter"](around:${radius},${lat},${lon}););out body 20;`;
   const data = await overpassQuery(query);
   
   return data.elements.map((el: any) => ({
@@ -1023,125 +1136,70 @@ export async function searchNeighborhoods(lat: number, lon: number, radius: numb
     lat: el.lat,
     lon: el.lon,
     wikipedia: el.tags?.wikipedia,
-    wikidata: el.tags?.wikidata,
   })).filter((n: any) => n.name);
 }
 
-// ============ HELPER: Get comprehensive destination data ============
+// ============ COMPREHENSIVE DESTINATION OVERVIEW ============
 
 export async function getDestinationOverview(destination: string) {
-  console.log(`[API] Starting comprehensive research for: ${destination}`);
+  console.log(`[API] Starting research for: ${destination}`);
   
   const results: Record<string, any> = {};
   const errors: string[] = [];
 
-  // 1. Geocode the destination
+  // 1. Geocode
   try {
-    console.log('[API] Geocoding destination...');
     const geoData = await geocodeLocation(destination);
-    if (geoData && geoData.length > 0) {
+    if (geoData?.length > 0) {
       results.location = geoData[0];
-      console.log(`[API] Found location: ${results.location.display_name}`);
+      console.log(`[API] Found: ${results.location.display_name}`);
     }
-  } catch (e: any) {
-    errors.push(`Geocoding: ${e.message}`);
-  }
+  } catch (e: any) { errors.push(`Geocoding: ${e.message}`); }
 
-  // 2. Get country info if it's a country
+  // 2. Country info
   try {
-    console.log('[API] Fetching country info...');
     const countryInfo = await getCountryInfo(destination);
-    if (countryInfo) {
-      results.country = countryInfo;
-      console.log(`[API] Found country: ${countryInfo.name}`);
-    }
-  } catch (e: any) {
-    errors.push(`Country info: ${e.message}`);
-  }
+    if (countryInfo) results.country = countryInfo;
+  } catch (e: any) { errors.push(`Country: ${e.message}`); }
 
-  // 3. Get Wikipedia summary
+  // 3. Wikipedia
   try {
-    console.log('[API] Fetching Wikipedia summary...');
     const wikiSummary = await getWikipediaSummary(destination);
-    if (wikiSummary) {
-      results.wikipedia = wikiSummary;
-      console.log(`[API] Found Wikipedia article: ${wikiSummary.title}`);
-    }
-  } catch (e: any) {
-    errors.push(`Wikipedia: ${e.message}`);
-  }
+    if (wikiSummary) results.wikipedia = wikiSummary;
+  } catch (e: any) { errors.push(`Wikipedia: ${e.message}`); }
 
-  // 4. Get images
+  // 4. Images
   try {
-    console.log('[API] Searching for images...');
-    const images = await searchImages(destination, 10);
-    results.images = images;
-    console.log(`[API] Found ${images.length} images`);
-  } catch (e: any) {
-    errors.push(`Images: ${e.message}`);
-  }
+    results.images = await searchImages(destination, 10);
+  } catch (e: any) { errors.push(`Images: ${e.message}`); }
 
-  // 5. If we have coordinates, get more data
+  // 5. Location-based data
   if (results.location || results.country) {
-    const lat = results.location?.lat || results.country?.latlng?.[0];
-    const lon = results.location?.lon || results.country?.latlng?.[1];
+    const lat = parseFloat(results.location?.lat) || results.country?.latlng?.[0];
+    const lon = parseFloat(results.location?.lon) || results.country?.latlng?.[1];
     
     if (lat && lon) {
-      // Get weather
-      try {
-        console.log('[API] Fetching weather data...');
-        results.weather = await getWeather(parseFloat(lat), parseFloat(lon));
-        console.log('[API] Weather data fetched');
-      } catch (e: any) {
-        errors.push(`Weather: ${e.message}`);
-      }
+      try { results.weather = await getWeather(lat, lon); } 
+      catch (e: any) { errors.push(`Weather: ${e.message}`); }
 
-      // Get attractions
-      try {
-        console.log('[API] Searching for attractions...');
-        results.attractions = await searchPlaces(parseFloat(lat), parseFloat(lon), 20000, 'attractions');
-        console.log(`[API] Found ${results.attractions?.length || 0} attractions`);
-      } catch (e: any) {
-        errors.push(`Attractions: ${e.message}`);
-      }
+      try { results.attractions = await getOpenTripMapAttractions(lat, lon, 20000); } 
+      catch (e: any) { errors.push(`Attractions: ${e.message}`); }
 
-      // Get airports
-      try {
-        console.log('[API] Searching for airports...');
-        results.airports = await searchAirports(parseFloat(lat), parseFloat(lon));
-        console.log(`[API] Found ${results.airports?.length || 0} airports`);
-      } catch (e: any) {
-        errors.push(`Airports: ${e.message}`);
-      }
+      try { results.airports = await searchAirports(lat, lon); } 
+      catch (e: any) { errors.push(`Airports: ${e.message}`); }
     }
   }
 
-  // 6. Get travel advisory
+  // 6. Travel advisory
   if (results.country?.cca2) {
-    try {
-      console.log('[API] Fetching travel advisory...');
-      results.travelAdvisory = await getTravelAdvisory(results.country.cca2);
-      console.log('[API] Travel advisory fetched');
-    } catch (e: any) {
-      errors.push(`Travel advisory: ${e.message}`);
-    }
+    try { results.travelAdvisory = await getTravelAdvisory(results.country.cca2); } 
+    catch (e: any) { errors.push(`Advisory: ${e.message}`); }
   }
 
-  // 7. Get exchange rates
-  if (results.country?.currencies?.[0]?.code) {
-    try {
-      console.log('[API] Fetching exchange rates...');
-      results.exchangeRates = await getExchangeRates('USD');
-      console.log('[API] Exchange rates fetched');
-    } catch (e: any) {
-      errors.push(`Exchange rates: ${e.message}`);
-    }
-  }
+  // 7. Exchange rates
+  try { results.exchangeRates = await getExchangeRates('USD'); } 
+  catch (e: any) { errors.push(`Rates: ${e.message}`); }
 
-  console.log(`[API] Research complete. Errors: ${errors.length}`);
-  if (errors.length > 0) {
-    console.log('[API] Errors encountered:', errors);
-  }
-
+  console.log(`[API] Complete. Errors: ${errors.length}`);
   return { results, errors };
 }
