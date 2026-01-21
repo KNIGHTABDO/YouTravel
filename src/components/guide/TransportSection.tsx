@@ -9,6 +9,11 @@ interface TransportSectionProps {
 }
 
 export function TransportSection({ transportation }: TransportSectionProps) {
+  // Return null if no transportation data
+  if (!transportation) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -40,7 +45,7 @@ export function TransportSection({ transportation }: TransportSectionProps) {
           <div>
             <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-2">Main Airports</p>
             <ul className="space-y-2">
-              {transportation.gettingThere.mainAirports.map((airport, index) => (
+              {(transportation.gettingThere?.mainAirports || []).map((airport, index) => (
                 <li key={index} className="flex items-center gap-2 text-foreground">
                   <MapPin className="w-4 h-4 text-primary" />
                   {airport}
@@ -52,7 +57,7 @@ export function TransportSection({ transportation }: TransportSectionProps) {
           <div>
             <p className="text-sm font-medium text-muted-foreground uppercase tracking-wide mb-2">Alternatives</p>
             <ul className="space-y-2">
-              {transportation.gettingThere.alternativeOptions.map((option, index) => (
+              {(transportation.gettingThere?.alternativeOptions || []).map((option, index) => (
                 <li key={index} className="flex items-center gap-2 text-foreground">
                   <Info className="w-4 h-4 text-muted-foreground" />
                   {option}
@@ -68,31 +73,31 @@ export function TransportSection({ transportation }: TransportSectionProps) {
         <TransportCard
           icon={<Train className="w-5 h-5" />}
           title="Public Transport"
-          description={transportation.gettingAround.publicTransport}
+          description={transportation.gettingAround?.publicTransport || 'Check local options'}
           color="green"
         />
         <TransportCard
           icon={<Car className="w-5 h-5" />}
           title="Taxis & Rideshare"
-          description={transportation.gettingAround.taxis}
+          description={transportation.gettingAround?.taxis || 'Available in most areas'}
           color="yellow"
         />
         <TransportCard
           icon={<Car className="w-5 h-5" />}
           title="Car Rental"
-          description={transportation.gettingAround.rentals}
+          description={transportation.gettingAround?.rentals || 'Check local agencies'}
           color="blue"
         />
         <TransportCard
           icon={<MapPin className="w-5 h-5" />}
           title="Walking"
-          description={transportation.gettingAround.walking}
+          description={transportation.gettingAround?.walking || 'Explore on foot'}
           color="purple"
         />
       </div>
       
       {/* Tips */}
-      {transportation.gettingAround.tips.length > 0 && (
+      {transportation.gettingAround?.tips && transportation.gettingAround.tips.length > 0 && (
         <div className="bg-gradient-to-r from-primary/5 to-accent/5 rounded-2xl p-6 mb-6">
           <h3 className="text-lg font-bold text-foreground mb-4 flex items-center gap-2">
             <Lightbulb className="w-5 h-5 text-accent" />
@@ -119,7 +124,7 @@ export function TransportSection({ transportation }: TransportSectionProps) {
         </div>
         
         <div className="flex flex-wrap gap-2 mb-4">
-          {transportation.intercity.options.map((option, index) => (
+          {(transportation.intercity?.options || []).map((option, index) => (
             <span
               key={index}
               className="px-4 py-2 bg-muted rounded-full text-sm font-medium text-foreground"
@@ -130,7 +135,7 @@ export function TransportSection({ transportation }: TransportSectionProps) {
         </div>
         
         <p className="text-muted-foreground text-sm bg-muted/50 rounded-lg p-4">
-          <strong className="text-foreground">Recommendation:</strong> {transportation.intercity.recommendations}
+          <strong className="text-foreground">Recommendation:</strong> {transportation.intercity?.recommendations || 'Check local transport options'}
         </p>
       </div>
     </motion.section>

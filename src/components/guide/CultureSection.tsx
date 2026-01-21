@@ -9,6 +9,11 @@ interface CultureSectionProps {
 }
 
 export function CultureSection({ culture }: CultureSectionProps) {
+  // Return null if no culture data
+  if (!culture) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -42,7 +47,7 @@ export function CultureSection({ culture }: CultureSectionProps) {
             <h3 className="font-bold text-foreground">Etiquette Tips</h3>
           </div>
           <ul className="space-y-3">
-            {culture.etiquette.map((item, index) => (
+            {(culture.etiquette || []).map((item, index) => (
               <li key={index} className="flex items-start gap-2">
                 <span className="text-green-500 mt-1">✓</span>
                 <span className="text-muted-foreground text-sm">{item}</span>
@@ -60,7 +65,7 @@ export function CultureSection({ culture }: CultureSectionProps) {
             <h3 className="font-bold text-foreground">What to Avoid</h3>
           </div>
           <ul className="space-y-3">
-            {culture.taboos.map((item, index) => (
+            {(culture.taboos || []).map((item, index) => (
               <li key={index} className="flex items-start gap-2">
                 <span className="text-red-500 mt-1">✗</span>
                 <span className="text-muted-foreground text-sm">{item}</span>
@@ -75,25 +80,25 @@ export function CultureSection({ culture }: CultureSectionProps) {
         <QuickCard
           icon={<Shirt className="w-5 h-5" />}
           title="Dress Code"
-          content={culture.dress}
+          content={culture.dress || 'Dress appropriately for the occasion'}
           color="blue"
         />
         <QuickCard
           icon={<Coins className="w-5 h-5" />}
           title="Tipping"
-          content={culture.tipping}
+          content={culture.tipping || 'Check local customs'}
           color="green"
         />
         <QuickCard
           icon={<MessageCircle className="w-5 h-5" />}
           title="Greetings"
-          content={culture.greetings}
+          content={culture.greetings || 'Greet people respectfully'}
           color="purple"
         />
       </div>
       
       {/* Local Customs */}
-      {culture.localCustoms.length > 0 && (
+      {culture.localCustoms && culture.localCustoms.length > 0 && (
         <div className="bg-white rounded-2xl shadow-lg border border-card-border p-6">
           <div className="flex items-center gap-3 mb-4">
             <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">

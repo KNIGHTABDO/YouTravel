@@ -17,6 +17,11 @@ const typeColors = {
 };
 
 export function NeighborhoodsSection({ neighborhoods }: NeighborhoodsSectionProps) {
+  // Return null if no neighborhoods data
+  if (!neighborhoods || neighborhoods.length === 0) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -83,7 +88,7 @@ export function NeighborhoodsSection({ neighborhoods }: NeighborhoodsSectionProp
             <div className="p-6">
               <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Best for</p>
               <div className="flex flex-wrap gap-2">
-                {neighborhood.bestFor.map((item, i) => (
+                {(neighborhood.bestFor || []).map((item, i) => (
                   <span
                     key={i}
                     className="inline-flex items-center gap-1 px-2 py-1 bg-primary/5 text-primary rounded text-xs font-medium"
@@ -96,7 +101,7 @@ export function NeighborhoodsSection({ neighborhoods }: NeighborhoodsSectionProp
             </div>
             
             {/* Nearby */}
-            {neighborhood.nearbyAttractions.length > 0 && (
+            {neighborhood.nearbyAttractions && neighborhood.nearbyAttractions.length > 0 && (
               <div className="px-6 pb-6">
                 <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2">Nearby</p>
                 <p className="text-sm text-foreground">{neighborhood.nearbyAttractions.join(' • ')}</p>

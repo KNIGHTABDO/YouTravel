@@ -10,6 +10,11 @@ interface BudgetSectionProps {
 }
 
 export function BudgetSection({ budget }: BudgetSectionProps) {
+  // Return null if no budget data
+  if (!budget) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}

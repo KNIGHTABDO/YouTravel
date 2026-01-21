@@ -10,6 +10,11 @@ interface CitiesSectionProps {
 }
 
 export function CitiesSection({ cities }: CitiesSectionProps) {
+  // Return null if no cities data
+  if (!cities || cities.length === 0) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -67,7 +72,7 @@ export function CitiesSection({ cities }: CitiesSectionProps) {
                 <div>
                   <p className="text-sm font-medium text-muted-foreground mb-2">Highlights</p>
                   <div className="flex flex-wrap gap-2">
-                    {city.highlights.map((highlight, i) => (
+                    {(city.highlights || []).map((highlight, i) => (
                       <span
                         key={i}
                         className="inline-flex items-center gap-1 px-3 py-1 bg-muted rounded-full text-sm text-foreground"

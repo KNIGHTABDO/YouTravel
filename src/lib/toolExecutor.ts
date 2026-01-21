@@ -4,6 +4,7 @@
 import {
   geocodeLocation,
   getCountryInfo,
+  getCountryByCode,
   getWikipediaSummary,
   getWikipediaContent,
   searchWikipedia,
@@ -161,25 +162,43 @@ async function executeSearchDestination(query: string): Promise<ToolResult> {
     };
   }
 
-  // 3. Get country information - try to get English country name
-  const countryQuery = results.location?.country || query;
-  const countryResult = await safeApiCall(
-    () => getCountryInfo(countryQuery),
-    'REST Countries'
-  );
-  if (countryResult.success && countryResult.data) {
+  // 3. Get country information - use country code if available (more reliable than native name)
+  // Nominatim returns country names in local language (e.g., "Ελλάς" instead of "Greece")
+  // So we should use the country code for REST Countries lookup
+  let countryResult;
+  
+  if (results.location?.countryCode) {
+    // Use country code for reliable lookup
+    countryResult = await safeApiCall(
+      () => getCountryByCode(results.location.countryCode),
+      'REST Countries (by code)'
+    );
+  }
+  
+  // Fallback to name-based lookup if code lookup failed
+  if (!countryResult?.success || !countryResult?.data) {
+    const countryQuery = query; // Use the original search query, not the native name
+    countryResult = await safeApiCall(
+      () => getCountryInfo(countryQuery),
+      'REST Countries'
+    );
+  }
+  
+  if (countryResult?.success && countryResult?.data) {
     results.country = countryResult.data;
     // Store the English country name for use by other tools
-    results.englishCountryName = countryResult.data.name || countryQuery;
+    results.englishCountryName = countryResult.data.name || query;
+    // Also store country code for API calls
+    results.countryCode = countryResult.data.cca2;
   } else {
     // Fallback to using the query as the country name
     results.englishCountryName = query;
   }
 
-  // 4. Web search for context
+  // 4. Web search for context (uses Wikipedia + Wikidata + DuckDuckGo fallback)
   const webResult = await safeApiCall(
     () => webSearch(`${query} travel guide`),
-    'DuckDuckGo'
+    'Web Search (Multi-source)'
   );
   if (webResult.success && webResult.data) {
     results.webSearch = webResult.data;
@@ -188,7 +207,7 @@ async function executeSearchDestination(query: string): Promise<ToolResult> {
   return {
     success: true,
     data: results,
-    source: 'Nominatim, Wikipedia, REST Countries, DuckDuckGo',
+    source: 'Nominatim, Wikipedia, REST Countries, Web Search',
   };
 }
 
@@ -314,10 +333,10 @@ async function executeGetNeighborhoods(city: string, country?: string): Promise<
     results.enrichedNeighborhoods = enriched;
   }
 
-  const webResult = await safeApiCall(() => webSearch(`${city} best neighborhoods to stay`), 'DuckDuckGo');
+  const webResult = await safeApiCall(() => webSearch(`${city} best neighborhoods to stay`), 'Web Search');
   if (webResult.success) results.webSearch = webResult.data;
 
-  return { success: true, data: results, source: 'Nominatim, Overpass, Wikipedia, DuckDuckGo' };
+  return { success: true, data: results, source: 'Nominatim, Overpass, Wikipedia, Web Search' };
 }
 
 async function executeGetBudgetInfo(destination: string, currency: string = 'USD'): Promise<ToolResult> {
@@ -339,13 +358,13 @@ async function executeGetBudgetInfo(destination: string, currency: string = 'USD
     }
   }
 
-  const webResult = await safeApiCall(() => webSearch(`${destination} travel budget cost daily expenses`), 'DuckDuckGo');
+  const webResult = await safeApiCall(() => webSearch(`${destination} travel budget cost daily expenses`), 'Web Search');
   if (webResult.success) results.webSearch = webResult.data;
 
-  const hotelResult = await safeApiCall(() => webSearch(`${destination} hotel prices average cost`), 'DuckDuckGo');
+  const hotelResult = await safeApiCall(() => webSearch(`${destination} hotel prices average cost`), 'Web Search');
   if (hotelResult.success) results.hotelInfo = hotelResult.data;
 
-  return { success: true, data: results, source: 'REST Countries, Frankfurter, DuckDuckGo' };
+  return { success: true, data: results, source: 'REST Countries, Frankfurter, Web Search' };
 }
 
 async function executeGetTransportation(destination: string): Promise<ToolResult> {
@@ -367,13 +386,13 @@ async function executeGetTransportation(destination: string): Promise<ToolResult
     if (transitResult.success) results.transitStops = transitResult.data;
   }
 
-  const webResult = await safeApiCall(() => webSearch(`${destination} public transportation getting around`), 'DuckDuckGo');
+  const webResult = await safeApiCall(() => webSearch(`${destination} public transportation getting around`), 'Web Search');
   if (webResult.success) results.webSearch = webResult.data;
 
   const countryResult = await safeApiCall(() => getCountryInfo(destination), 'REST Countries');
   if (countryResult.success) results.drivingSide = countryResult.data?.drivingSide;
 
-  return { success: true, data: results, source: 'Nominatim, Overpass, DuckDuckGo, REST Countries' };
+  return { success: true, data: results, source: 'Nominatim, Overpass, Web Search, REST Countries' };
 }
 
 async function executeGetSafetyInfo(country: string): Promise<ToolResult> {
@@ -405,10 +424,10 @@ async function executeGetSafetyInfo(country: string): Promise<ToolResult> {
   const ukResult = await safeApiCall(() => getUKTravelAdvice(country), 'UK FCDO');
   if (ukResult.success) results.ukAdvice = ukResult.data;
 
-  const webResult = await safeApiCall(() => webSearch(`${country} travel safety tips warnings`), 'DuckDuckGo');
+  const webResult = await safeApiCall(() => webSearch(`${country} travel safety tips warnings`), 'Web Search');
   if (webResult.success) results.webSearch = webResult.data;
 
-  return { success: true, data: results, source: 'REST Countries, Travel Advisory, UK FCDO, DuckDuckGo' };
+  return { success: true, data: results, source: 'REST Countries, Travel Advisory, UK FCDO, Web Search' };
 }
 
 async function executeGetCultureInfo(destination: string): Promise<ToolResult> {
@@ -422,13 +441,13 @@ async function executeGetCultureInfo(destination: string): Promise<ToolResult> {
   const countryResult = await safeApiCall(() => getCountryInfo(destination), 'REST Countries');
   if (countryResult.success) results.countryInfo = countryResult.data;
 
-  const etiquetteResult = await safeApiCall(() => webSearch(`${destination} cultural etiquette customs dos donts`), 'DuckDuckGo');
+  const etiquetteResult = await safeApiCall(() => webSearch(`${destination} cultural etiquette customs dos donts`), 'Web Search');
   if (etiquetteResult.success) results.etiquette = etiquetteResult.data;
 
-  const foodResult = await safeApiCall(() => webSearch(`${destination} traditional food cuisine must try`), 'DuckDuckGo');
+  const foodResult = await safeApiCall(() => webSearch(`${destination} traditional food cuisine must try`), 'Web Search');
   if (foodResult.success) results.food = foodResult.data;
 
-  return { success: true, data: results, source: 'Wikipedia, REST Countries, DuckDuckGo' };
+  return { success: true, data: results, source: 'Wikipedia, REST Countries, Web Search' };
 }
 
 async function executeGetWeather(location: string, providedLat?: number, providedLon?: number): Promise<ToolResult> {
@@ -467,10 +486,10 @@ async function executeGetWeather(location: string, providedLat?: number, provide
   const climateResult = await safeApiCall(() => getClimateData(lat, lon), 'Open-Meteo Archive');
   if (climateResult.success) results.climate = climateResult.data;
 
-  const webResult = await safeApiCall(() => webSearch(`${location} best time to visit weather`), 'DuckDuckGo');
+  const webResult = await safeApiCall(() => webSearch(`${location} best time to visit weather`), 'Web Search');
   if (webResult.success) results.webSearch = webResult.data;
 
-  return { success: true, data: results, source: 'Nominatim, Open-Meteo, DuckDuckGo' };
+  return { success: true, data: results, source: 'Nominatim, Open-Meteo, Web Search' };
 }
 
 async function executeSearchImages(query: string, count: number = 10): Promise<ToolResult> {
@@ -500,10 +519,10 @@ async function executeGetVisaInfo(destination: string, nationality?: string): Pr
   const ukResult = await safeApiCall(() => getUKTravelAdvice(destination), 'UK FCDO');
   if (ukResult.success) results.ukAdvice = ukResult.data;
 
-  const webResult = await safeApiCall(() => webSearch(`${destination} visa requirements entry ${nationality || ''}`), 'DuckDuckGo');
+  const webResult = await safeApiCall(() => webSearch(`${destination} visa requirements entry ${nationality || ''}`), 'Web Search');
   if (webResult.success) results.webSearch = webResult.data;
 
-  return { success: true, data: results, source: 'REST Countries, UK FCDO, DuckDuckGo' };
+  return { success: true, data: results, source: 'REST Countries, UK FCDO, Web Search' };
 }
 
 async function executeGetLocalTips(destination: string): Promise<ToolResult> {
@@ -511,16 +530,16 @@ async function executeGetLocalTips(destination: string): Promise<ToolResult> {
   
   const results: any = { destination };
 
-  const tipsResult = await safeApiCall(() => webSearch(`${destination} local tips insider secrets hidden gems`), 'DuckDuckGo');
+  const tipsResult = await safeApiCall(() => webSearch(`${destination} local tips insider secrets hidden gems`), 'Web Search');
   if (tipsResult.success) results.tips = tipsResult.data;
 
-  const mistakesResult = await safeApiCall(() => webSearch(`${destination} tourist mistakes avoid`), 'DuckDuckGo');
+  const mistakesResult = await safeApiCall(() => webSearch(`${destination} tourist mistakes avoid`), 'Web Search');
   if (mistakesResult.success) results.mistakes = mistakesResult.data;
 
-  const hiddenResult = await safeApiCall(() => webSearch(`${destination} off beaten path locals`), 'DuckDuckGo');
+  const hiddenResult = await safeApiCall(() => webSearch(`${destination} off beaten path locals`), 'Web Search');
   if (hiddenResult.success) results.hiddenGems = hiddenResult.data;
 
-  return { success: true, data: results, source: 'DuckDuckGo' };
+  return { success: true, data: results, source: 'Web Search' };
 }
 
 async function executeCompareDestinations(destinations: string[]): Promise<ToolResult> {

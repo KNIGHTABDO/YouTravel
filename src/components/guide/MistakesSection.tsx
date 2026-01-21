@@ -9,6 +9,11 @@ interface MistakesSectionProps {
 }
 
 export function MistakesSection({ mistakes }: MistakesSectionProps) {
+  // Return null if no mistakes data
+  if (!mistakes || mistakes.length === 0) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}

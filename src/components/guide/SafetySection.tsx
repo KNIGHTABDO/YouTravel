@@ -18,7 +18,12 @@ const ratingConfig = {
 };
 
 export function SafetySection({ safety }: SafetySectionProps) {
-  const rating = ratingConfig[safety.overallRating];
+  // Return null if no safety data
+  if (!safety) {
+    return null;
+  }
+  
+  const rating = ratingConfig[safety.overallRating] || ratingConfig['moderate'];
   
   return (
     <motion.section
@@ -55,7 +60,7 @@ export function SafetySection({ safety }: SafetySectionProps) {
       
       <div className="grid md:grid-cols-2 gap-6 mb-6">
         {/* Concerns */}
-        {safety.concerns.length > 0 && (
+        {safety.concerns && safety.concerns.length > 0 && (
           <div className="bg-white rounded-2xl shadow-lg border border-card-border p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-orange-100 rounded-lg flex items-center justify-center">
@@ -75,7 +80,7 @@ export function SafetySection({ safety }: SafetySectionProps) {
         )}
         
         {/* Safety Tips */}
-        {safety.tips.length > 0 && (
+        {safety.tips && safety.tips.length > 0 && (
           <div className="bg-white rounded-2xl shadow-lg border border-card-border p-6">
             <div className="flex items-center gap-3 mb-4">
               <div className="w-10 h-10 bg-green-100 rounded-lg flex items-center justify-center">

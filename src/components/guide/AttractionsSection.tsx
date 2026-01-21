@@ -19,6 +19,11 @@ const typeConfig: Record<string, { icon: React.ReactNode; color: string; label: 
 };
 
 export function AttractionsSection({ attractions }: AttractionsSectionProps) {
+  // Return null if no attractions data
+  if (!attractions || attractions.length === 0) {
+    return null;
+  }
+  
   // Separate popular from hidden gems
   const popular = attractions.filter(a => a.type === 'popular' || a.type === 'cultural');
   const hiddenGems = attractions.filter(a => a.type === 'hidden-gem' || a.type === 'nature' || a.type === 'food' || a.type === 'nightlife');

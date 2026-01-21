@@ -66,7 +66,7 @@ export function TravelGuideDisplay({ guide, onReset }: TravelGuideDisplayProps) 
         <OverviewSection 
           overview={guide.overview} 
           destination={guide.destination}
-          imageUrl={guide.images[0]?.url}
+          imageUrl={guide.images?.[0]?.url}
         />
         
         <CitiesSection cities={guide.topCities} />

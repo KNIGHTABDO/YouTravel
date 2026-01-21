@@ -32,6 +32,11 @@ function getIcon(type: string): string {
 }
 
 export function BestForSection({ bestFor }: BestForSectionProps) {
+  // Return null if no bestFor data
+  if (!bestFor || bestFor.length === 0) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}

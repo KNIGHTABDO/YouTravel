@@ -53,7 +53,7 @@ export function OverviewSection({ overview, destination, imageUrl }: OverviewSec
               {destination}
             </h1>
             <p className="text-lg md:text-xl text-white/90 max-w-3xl">
-              {overview.summary}
+              {overview?.summary || `Welcome to ${destination}. Explore this amazing destination.`}
             </p>
           </motion.div>
         </div>
@@ -64,22 +64,22 @@ export function OverviewSection({ overview, destination, imageUrl }: OverviewSec
         <InfoCard 
           icon={<Calendar className="w-5 h-5" />}
           label="Best Time"
-          value={overview.bestTimeToVisit.split('.')[0]}
+          value={(overview?.bestTimeToVisit || 'Check local seasons').split('.')[0]}
         />
         <InfoCard 
           icon={<Sun className="w-5 h-5" />}
           label="Climate"
-          value={overview.climate.split('.')[0]}
+          value={(overview?.climate || 'Varies by region').split('.')[0]}
         />
         <InfoCard 
           icon={<CreditCard className="w-5 h-5" />}
           label="Currency"
-          value={overview.currency.split('.')[0]}
+          value={(overview?.currency || 'Local currency').split('.')[0]}
         />
         <InfoCard 
           icon={<Languages className="w-5 h-5" />}
           label="Language"
-          value={overview.language.split('.')[0]}
+          value={(overview?.language || 'Local language').split('.')[0]}
         />
       </div>
       
@@ -87,7 +87,7 @@ export function OverviewSection({ overview, destination, imageUrl }: OverviewSec
       <div className="bg-white rounded-2xl shadow-lg border border-card-border p-6 md:p-8">
         <h3 className="text-xl font-bold text-foreground mb-4">Highlights</h3>
         <div className="flex flex-wrap gap-2">
-          {overview.highlights.map((highlight, index) => (
+          {(overview?.highlights || []).map((highlight, index) => (
             <motion.span
               key={index}
               initial={{ opacity: 0, scale: 0.8 }}
