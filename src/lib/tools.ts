@@ -1,4 +1,5 @@
 // AI Tool Definitions for GitHub Models API (OpenAI-compatible)
+// These tools connect to REAL APIs - no hardcoded data
 
 export interface ToolDefinition {
   type: 'function';
@@ -18,106 +19,57 @@ export interface ToolDefinition {
   };
 }
 
-// All available tools for the travel research agent
+// All available tools for the travel research agent - connected to real APIs
 export const travelResearchTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'web_search',
-      description: 'Search the web for travel information, reviews, articles, and current data about destinations. Use for finding up-to-date information about places, events, and travel conditions.',
+      name: 'search_destination',
+      description: 'Search for a destination using real geocoding APIs (Nominatim/OpenStreetMap) and Wikipedia. Returns coordinates, country info, description, and basic facts. ALWAYS call this first!',
       parameters: {
         type: 'object',
         properties: {
-          query: {
+          destination: {
             type: 'string',
-            description: 'The search query for finding travel information'
-          },
-          category: {
-            type: 'string',
-            description: 'Category of search to focus results',
-            enum: ['general', 'attractions', 'hotels', 'restaurants', 'safety', 'transportation', 'culture', 'costs', 'weather']
-          },
-          region: {
-            type: 'string',
-            description: 'Geographic region to focus the search on'
+            description: 'The destination to search for (country, city, or region name)'
           }
         },
-        required: ['query']
+        required: ['destination']
       }
     }
   },
   {
     type: 'function',
     function: {
-      name: 'discover_places',
-      description: 'Discover and retrieve detailed information about places, cities, neighborhoods, and points of interest in a destination.',
+      name: 'get_country_info',
+      description: 'Get detailed country information from REST Countries API including capital, population, languages, currencies, timezones, and regional info.',
+      parameters: {
+        type: 'object',
+        properties: {
+          country: {
+            type: 'string',
+            description: 'The country name to get information for'
+          }
+        },
+        required: ['country']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_city_info',
+      description: 'Get information about major cities in a destination using OpenStreetMap Overpass API. Returns real cities with coordinates and basic info.',
       parameters: {
         type: 'object',
         properties: {
           destination: {
             type: 'string',
-            description: 'The country or city to discover places in'
-          },
-          placeType: {
-            type: 'string',
-            description: 'Type of places to discover',
-            enum: ['cities', 'neighborhoods', 'attractions', 'restaurants', 'hotels', 'landmarks', 'hidden-gems', 'nature']
+            description: 'The country or region to find cities in'
           },
           limit: {
             type: 'string',
-            description: 'Maximum number of places to return (default: 10)'
-          }
-        },
-        required: ['destination', 'placeType']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_location_details',
-      description: 'Get detailed information about a specific location including coordinates, descriptions, ratings, and practical information.',
-      parameters: {
-        type: 'object',
-        properties: {
-          locationName: {
-            type: 'string',
-            description: 'Name of the location to get details for'
-          },
-          infoTypes: {
-            type: 'string',
-            description: 'Comma-separated types of information needed: coordinates, description, ratings, hours, prices, tips'
-          }
-        },
-        required: ['locationName']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'estimate_costs',
-      description: 'Estimate travel costs for a destination including accommodation, food, transportation, and activities.',
-      parameters: {
-        type: 'object',
-        properties: {
-          destination: {
-            type: 'string',
-            description: 'The destination to estimate costs for'
-          },
-          category: {
-            type: 'string',
-            description: 'Cost category to estimate',
-            enum: ['accommodation', 'food', 'transportation', 'activities', 'all']
-          },
-          budgetLevel: {
-            type: 'string',
-            description: 'Budget level for estimates',
-            enum: ['budget', 'mid-range', 'luxury', 'all']
-          },
-          duration: {
-            type: 'string',
-            description: 'Duration of stay (e.g., "7 days", "2 weeks")'
+            description: 'Maximum number of cities to return (default: 10)'
           }
         },
         required: ['destination']
@@ -127,18 +79,23 @@ export const travelResearchTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'analyze_safety',
-      description: 'Analyze safety conditions, travel advisories, health concerns, and security information for a destination.',
+      name: 'search_attractions',
+      description: 'Search for real tourist attractions, landmarks, and points of interest using OpenStreetMap Overpass API. Returns actual places with coordinates.',
       parameters: {
         type: 'object',
         properties: {
           destination: {
             type: 'string',
-            description: 'The destination to analyze safety for'
+            description: 'The destination to search attractions in'
           },
-          aspects: {
+          type: {
             type: 'string',
-            description: 'Comma-separated safety aspects to analyze: crime, health, natural-disasters, political, scams, transportation'
+            description: 'Type of attractions to search for',
+            enum: ['all', 'tourism', 'museum', 'historic', 'nature', 'religious', 'entertainment']
+          },
+          limit: {
+            type: 'string',
+            description: 'Maximum number of attractions to return (default: 20)'
           }
         },
         required: ['destination']
@@ -148,18 +105,39 @@ export const travelResearchTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'get_cultural_info',
-      description: 'Get cultural information including customs, etiquette, dress codes, tipping practices, and local traditions.',
+      name: 'get_neighborhoods',
+      description: 'Find real neighborhoods and districts in a city using OpenStreetMap. Returns actual areas with coordinates.',
+      parameters: {
+        type: 'object',
+        properties: {
+          city: {
+            type: 'string',
+            description: 'The city to find neighborhoods in'
+          },
+          limit: {
+            type: 'string',
+            description: 'Maximum number of neighborhoods to return (default: 10)'
+          }
+        },
+        required: ['city']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_budget_info',
+      description: 'Get budget and cost information using Frankfurter currency API for exchange rates. Provides currency info and cost context.',
       parameters: {
         type: 'object',
         properties: {
           destination: {
             type: 'string',
-            description: 'The destination to get cultural info for'
+            description: 'The destination to get budget info for'
           },
-          topics: {
+          baseCurrency: {
             type: 'string',
-            description: 'Comma-separated cultural topics: etiquette, dress, tipping, language, religion, food-customs, taboos, greetings'
+            description: 'Base currency for exchange rates (default: USD)'
           }
         },
         required: ['destination']
@@ -169,19 +147,65 @@ export const travelResearchTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'get_transportation_info',
-      description: 'Get transportation information including airports, public transit, intercity travel, and getting around tips.',
+      name: 'get_transportation',
+      description: 'Get real transportation info including airports (from OpenStreetMap) and transit options.',
       parameters: {
         type: 'object',
         properties: {
           destination: {
             type: 'string',
             description: 'The destination to get transportation info for'
-          },
-          transportType: {
+          }
+        },
+        required: ['destination']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_safety_info',
+      description: 'Get travel safety information from Travel-Advisory.info API and UK FCDO travel advice. Returns real advisories and safety scores.',
+      parameters: {
+        type: 'object',
+        properties: {
+          destination: {
             type: 'string',
-            description: 'Type of transportation info needed',
-            enum: ['airports', 'public-transit', 'taxis', 'car-rental', 'trains', 'buses', 'ferries', 'all']
+            description: 'The destination to get safety info for'
+          }
+        },
+        required: ['destination']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_culture_info',
+      description: 'Get cultural information about a destination using Wikipedia and web search. Returns customs, etiquette, and cultural tips.',
+      parameters: {
+        type: 'object',
+        properties: {
+          destination: {
+            type: 'string',
+            description: 'The destination to get cultural info for'
+          }
+        },
+        required: ['destination']
+      }
+    }
+  },
+  {
+    type: 'function',
+    function: {
+      name: 'get_weather',
+      description: 'Get real weather and climate data from Open-Meteo API. Returns current conditions and climate averages.',
+      parameters: {
+        type: 'object',
+        properties: {
+          destination: {
+            type: 'string',
+            description: 'The destination to get weather for'
           }
         },
         required: ['destination']
@@ -192,26 +216,17 @@ export const travelResearchTools: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'search_images',
-      description: 'Search for high-quality images of destinations, attractions, and places to include in the travel guide.',
+      description: 'Search for real images of a destination using Wikimedia Commons API. Returns actual photos with proper attribution.',
       parameters: {
         type: 'object',
         properties: {
           query: {
             type: 'string',
-            description: 'Search query for images'
-          },
-          location: {
-            type: 'string',
-            description: 'Location the images should be from'
-          },
-          imageType: {
-            type: 'string',
-            description: 'Type of images to search for',
-            enum: ['landscape', 'cityscape', 'landmark', 'food', 'culture', 'nature', 'street', 'aerial']
+            description: 'Search query for images (e.g., "Morocco travel", "Marrakech medina")'
           },
           count: {
             type: 'string',
-            description: 'Number of images to return (default: 5)'
+            description: 'Number of images to return (default: 10)'
           }
         },
         required: ['query']
@@ -221,55 +236,8 @@ export const travelResearchTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'compare_neighborhoods',
-      description: 'Compare neighborhoods for accommodation, considering factors like price, safety, accessibility, and atmosphere.',
-      parameters: {
-        type: 'object',
-        properties: {
-          city: {
-            type: 'string',
-            description: 'City to compare neighborhoods in'
-          },
-          criteria: {
-            type: 'string',
-            description: 'Comma-separated comparison criteria: price, safety, nightlife, family-friendly, accessibility, local-vibe, tourist-convenience'
-          },
-          neighborhoodCount: {
-            type: 'string',
-            description: 'Number of top neighborhoods to compare (default: 5)'
-          }
-        },
-        required: ['city']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_weather_climate',
-      description: 'Get weather patterns, climate information, and best times to visit for a destination.',
-      parameters: {
-        type: 'object',
-        properties: {
-          destination: {
-            type: 'string',
-            description: 'The destination to get weather info for'
-          },
-          infoType: {
-            type: 'string',
-            description: 'Type of weather/climate info',
-            enum: ['current', 'monthly-averages', 'best-time-to-visit', 'seasonal-events', 'all']
-          }
-        },
-        required: ['destination']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'get_visa_entry_info',
-      description: 'Get visa requirements, entry conditions, and documentation needed for a destination.',
+      name: 'get_visa_info',
+      description: 'Get visa and entry requirement information by searching Wikipedia and web sources.',
       parameters: {
         type: 'object',
         properties: {
@@ -277,38 +245,12 @@ export const travelResearchTools: ToolDefinition[] = [
             type: 'string',
             description: 'The destination country'
           },
-          travelerNationality: {
+          nationality: {
             type: 'string',
-            description: 'Nationality of the traveler (optional, will provide general info if not specified)'
+            description: 'Traveler nationality (optional)'
           }
         },
         required: ['destination']
-      }
-    }
-  },
-  {
-    type: 'function',
-    function: {
-      name: 'rank_destinations',
-      description: 'Rank and compare cities or regions within a country based on various criteria.',
-      parameters: {
-        type: 'object',
-        properties: {
-          country: {
-            type: 'string',
-            description: 'The country to rank destinations in'
-          },
-          criteria: {
-            type: 'string',
-            description: 'Comma-separated ranking criteria: popularity, uniqueness, accessibility, affordability, safety, culture, nature, food'
-          },
-          destinationType: {
-            type: 'string',
-            description: 'Type of destinations to rank',
-            enum: ['cities', 'regions', 'islands', 'coastal', 'mountain', 'historical']
-          }
-        },
-        required: ['country']
       }
     }
   },
@@ -316,18 +258,13 @@ export const travelResearchTools: ToolDefinition[] = [
     type: 'function',
     function: {
       name: 'get_local_tips',
-      description: 'Get insider tips and local knowledge about a destination that tourists often miss.',
+      description: 'Get local tips and insider advice by searching web sources and Wikipedia.',
       parameters: {
         type: 'object',
         properties: {
           destination: {
             type: 'string',
-            description: 'The destination to get local tips for'
-          },
-          tipCategory: {
-            type: 'string',
-            description: 'Category of tips',
-            enum: ['food', 'transport', 'money-saving', 'avoiding-crowds', 'local-experiences', 'common-mistakes', 'all']
+            description: 'The destination to get tips for'
           }
         },
         required: ['destination']
@@ -337,47 +274,38 @@ export const travelResearchTools: ToolDefinition[] = [
   {
     type: 'function',
     function: {
-      name: 'analyze_traveler_fit',
-      description: 'Analyze which types of travelers a destination is best suited for and why.',
+      name: 'compare_destinations',
+      description: 'Compare multiple destinations within a country or region using real data.',
       parameters: {
         type: 'object',
         properties: {
-          destination: {
+          destinations: {
             type: 'string',
-            description: 'The destination to analyze'
-          },
-          travelerTypes: {
-            type: 'string',
-            description: 'Comma-separated traveler types to analyze: solo, couples, families, budget, luxury, adventure, cultural, relaxation, party, seniors, digital-nomads'
+            description: 'Comma-separated list of destinations to compare'
           }
         },
-        required: ['destination']
+        required: ['destinations']
       }
     }
   },
   {
     type: 'function',
     function: {
-      name: 'synthesize_guide_section',
-      description: 'Synthesize researched information into a polished section of the travel guide.',
+      name: 'finalize_guide',
+      description: 'Call this when you have finished gathering all research data. Signals that the guide is ready to be synthesized.',
       parameters: {
         type: 'object',
         properties: {
-          section: {
-            type: 'string',
-            description: 'Section to synthesize',
-            enum: ['overview', 'cities', 'neighborhoods', 'attractions', 'budget', 'transportation', 'safety', 'culture', 'mistakes', 'best-for']
-          },
-          rawData: {
-            type: 'string',
-            description: 'Raw data and notes to synthesize into the section'
-          },
           destination: {
             type: 'string',
-            description: 'The destination this section is about'
+            description: 'The main destination of the guide'
+          },
+          summary: {
+            type: 'string',
+            description: 'A brief summary of the research completed'
           }
         },
-        required: ['section', 'rawData', 'destination']
+        required: ['destination']
       }
     }
   }
@@ -385,35 +313,35 @@ export const travelResearchTools: ToolDefinition[] = [
 
 // Tool name to step name mapping for UI
 export const toolStepMapping: Record<string, string> = {
-  'web_search': 'Searching the web',
-  'discover_places': 'Discovering places',
-  'get_location_details': 'Analyzing locations',
-  'estimate_costs': 'Estimating costs',
-  'analyze_safety': 'Checking safety',
-  'get_cultural_info': 'Understanding culture',
-  'get_transportation_info': 'Mapping transport',
-  'search_images': 'Finding images',
-  'compare_neighborhoods': 'Comparing areas',
-  'get_weather_climate': 'Checking climate',
-  'get_visa_entry_info': 'Reviewing entry requirements',
-  'rank_destinations': 'Ranking destinations',
-  'get_local_tips': 'Gathering local tips',
-  'analyze_traveler_fit': 'Analyzing fit',
-  'synthesize_guide_section': 'Compiling guide'
+  'search_destination': 'Locating destination',
+  'get_country_info': 'Getting country data',
+  'get_city_info': 'Finding cities',
+  'search_attractions': 'Discovering attractions',
+  'get_neighborhoods': 'Mapping neighborhoods',
+  'get_budget_info': 'Calculating costs',
+  'get_transportation': 'Finding transport',
+  'get_safety_info': 'Checking safety',
+  'get_culture_info': 'Learning culture',
+  'get_weather': 'Checking weather',
+  'search_images': 'Finding photos',
+  'get_visa_info': 'Checking visa requirements',
+  'get_local_tips': 'Gathering tips',
+  'compare_destinations': 'Comparing options',
+  'finalize_guide': 'Finalizing guide'
 };
 
 // Research steps for the UI
 export const researchSteps = [
-  { id: 'init', name: 'Initializing research', description: 'Starting comprehensive destination analysis' },
-  { id: 'overview', name: 'Researching destination', description: 'Gathering general information and context' },
-  { id: 'cities', name: 'Analyzing cities', description: 'Ranking and comparing cities and regions' },
-  { id: 'places', name: 'Discovering attractions', description: 'Finding must-see places and hidden gems' },
-  { id: 'neighborhoods', name: 'Comparing neighborhoods', description: 'Evaluating where to stay' },
-  { id: 'costs', name: 'Estimating costs', description: 'Calculating realistic budget ranges' },
-  { id: 'transport', name: 'Mapping transportation', description: 'Understanding how to get around' },
-  { id: 'safety', name: 'Analyzing safety', description: 'Reviewing travel advisories and concerns' },
-  { id: 'culture', name: 'Understanding culture', description: 'Learning customs and etiquette' },
-  { id: 'tips', name: 'Gathering insights', description: 'Collecting local tips and common mistakes' },
-  { id: 'images', name: 'Finding visuals', description: 'Sourcing destination imagery' },
-  { id: 'synthesize', name: 'Creating guide', description: 'Synthesizing research into premium guide' }
+  { id: 'init', name: 'Initializing research', description: 'Starting destination research with real APIs' },
+  { id: 'overview', name: 'Researching destination', description: 'Gathering data from Wikipedia, OpenStreetMap' },
+  { id: 'cities', name: 'Finding cities', description: 'Discovering cities via Overpass API' },
+  { id: 'places', name: 'Discovering attractions', description: 'Finding real places via OpenStreetMap' },
+  { id: 'neighborhoods', name: 'Mapping neighborhoods', description: 'Locating areas via Nominatim' },
+  { id: 'costs', name: 'Calculating costs', description: 'Getting exchange rates from Frankfurter' },
+  { id: 'transport', name: 'Finding transportation', description: 'Locating airports and transit' },
+  { id: 'safety', name: 'Checking safety', description: 'Fetching travel advisories' },
+  { id: 'culture', name: 'Understanding culture', description: 'Researching customs via Wikipedia' },
+  { id: 'tips', name: 'Gathering insights', description: 'Searching for local tips' },
+  { id: 'images', name: 'Finding photos', description: 'Searching Wikimedia Commons' },
+  { id: 'synthesize', name: 'Creating guide', description: 'Compiling research into guide' }
 ];
