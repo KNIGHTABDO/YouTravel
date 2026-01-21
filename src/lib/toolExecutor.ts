@@ -51,10 +51,17 @@ export async function executeTool(
 ): Promise<ToolResult> {
   console.log(`[Tool] Executing: ${toolName}`, JSON.stringify(args));
   
-  // Normalize common parameter names
-  const destination = args.destination || args.query || args.location || args.country || args.city;
-  const country = args.country || args.destination;
-  const city = args.city || args.destination;
+  // Normalize common parameter names with validation
+  const destination = (args.destination || args.query || args.location || args.country || args.city || '').toString().trim();
+  const country = (args.country || args.destination || '').toString().trim();
+  const city = (args.city || args.destination || '').toString().trim();
+  
+  // Validate that we have a destination for tools that need it
+  const needsDestination = ['search_destination', 'get_city_info', 'search_attractions', 'get_budget_info', 'get_transportation', 'get_culture_info', 'get_weather', 'get_local_tips'];
+  if (needsDestination.includes(toolName) && !destination) {
+    console.log(`[Tool] Error: ${toolName} requires a destination parameter`);
+    return { success: false, error: `Missing required parameter: destination` };
+  }
   
   switch (toolName) {
     case 'search_destination':
@@ -110,6 +117,10 @@ export async function executeTool(
 // ============ TOOL IMPLEMENTATIONS WITH REAL API CALLS ============
 
 async function executeSearchDestination(query: string): Promise<ToolResult> {
+  if (!query || query.trim() === '') {
+    return { success: false, error: 'Query parameter is required' };
+  }
+  
   console.log(`[Tool] Searching destination: ${query}`);
   
   const results: any = {
@@ -150,7 +161,7 @@ async function executeSearchDestination(query: string): Promise<ToolResult> {
     };
   }
 
-  // 3. Get country information
+  // 3. Get country information - try to get English country name
   const countryQuery = results.location?.country || query;
   const countryResult = await safeApiCall(
     () => getCountryInfo(countryQuery),
@@ -158,6 +169,11 @@ async function executeSearchDestination(query: string): Promise<ToolResult> {
   );
   if (countryResult.success && countryResult.data) {
     results.country = countryResult.data;
+    // Store the English country name for use by other tools
+    results.englishCountryName = countryResult.data.name || countryQuery;
+  } else {
+    // Fallback to using the query as the country name
+    results.englishCountryName = query;
   }
 
   // 4. Web search for context
@@ -199,7 +215,11 @@ async function executeGetCountryInfo(country: string): Promise<ToolResult> {
 }
 
 async function executeGetCityInfo(city: string, country?: string): Promise<ToolResult> {
-  console.log(`[Tool] Getting city info: ${city}, ${country}`);
+  if (!city || city.trim() === '') {
+    return { success: false, error: 'City parameter is required' };
+  }
+  
+  console.log(`[Tool] Getting city info: city="${city}", country="${country || 'not specified'}"`);
   
   const query = country ? `${city}, ${country}` : city;
   const results: any = { city, country };
@@ -357,9 +377,22 @@ async function executeGetTransportation(destination: string): Promise<ToolResult
 }
 
 async function executeGetSafetyInfo(country: string): Promise<ToolResult> {
-  console.log(`[Tool] Getting safety info: ${country}`);
+  if (!country || country.trim() === '') {
+    return { success: false, error: 'Country parameter is required' };
+  }
   
-  const results: any = { country };
+  // Ensure we're using English country name for API calls
+  // If it contains non-ASCII, we need to get the English name first
+  const hasNonAscii = /[^\x00-\x7F]/.test(country);
+  let englishCountryName = country;
+  
+  if (hasNonAscii) {
+    console.log(`[Tool] Getting safety info: Non-ASCII country name detected: "${country}", will try to resolve`);
+  } else {
+    console.log(`[Tool] Getting safety info: country="${country}"`);
+  }
+  
+  const results: any = { country: englishCountryName };
 
   const countryResult = await safeApiCall(() => getCountryInfo(country), 'REST Countries');
   if (countryResult.success) results.countryInfo = countryResult.data;
@@ -399,7 +432,11 @@ async function executeGetCultureInfo(destination: string): Promise<ToolResult> {
 }
 
 async function executeGetWeather(location: string, providedLat?: number, providedLon?: number): Promise<ToolResult> {
-  console.log(`[Tool] Getting weather: ${location}`);
+  if (!location || location.trim() === '') {
+    return { success: false, error: 'Location parameter is required' };
+  }
+  
+  console.log(`[Tool] Getting weather: location="${location}", lat=${providedLat}, lon=${providedLon}`);
   
   const results: any = { location };
 

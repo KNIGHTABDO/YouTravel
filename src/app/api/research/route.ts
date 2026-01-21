@@ -267,7 +267,12 @@ const RESEARCH_SEQUENCE: ResearchTask[] = [
   },
   { 
     toolName: 'get_country_info', 
-    getArgs: (dest, data) => ({ country: data.search_destination?.location?.country || dest }),
+    // Use English country name from search_destination, fallback to destination
+    getArgs: (dest, data) => ({ 
+      country: data.search_destination?.englishCountryName || 
+               data.search_destination?.country?.name || 
+               dest 
+    }),
     stepIndex: 1 
   },
   { 
@@ -306,7 +311,12 @@ const RESEARCH_SEQUENCE: ResearchTask[] = [
   },
   { 
     toolName: 'get_safety_info', 
-    getArgs: (dest, data) => ({ destination: data.search_destination?.location?.country || dest }),
+    // Use English country name from search_destination, fallback to destination
+    getArgs: (dest, data) => ({ 
+      destination: data.search_destination?.englishCountryName || 
+                   data.search_destination?.country?.name || 
+                   dest 
+    }),
     stepIndex: 7 
   },
   { 

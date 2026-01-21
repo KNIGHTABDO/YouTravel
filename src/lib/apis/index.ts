@@ -3,45 +3,72 @@
 
 const USER_AGENT = 'YouTravel/1.0 (https://youtravel.app; contact@youtravel.app)';
 
-// Helper for Overpass API with timeout and rate limit handling
-async function overpassQuery(query: string, timeout: number = 15000): Promise<any> {
-  try {
-    const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), timeout);
+// List of Overpass API mirrors for fallback
+const OVERPASS_ENDPOINTS = [
+  'https://overpass-api.de/api/interpreter',
+  'https://overpass.kumi.systems/api/interpreter',
+  'https://maps.mail.ru/osm/tools/overpass/api/interpreter',
+];
+
+// Helper for Overpass API with timeout, rate limit handling, and retries
+async function overpassQuery(query: string, timeout: number = 15000, retries: number = 2): Promise<any> {
+  let lastError: Error | null = null;
+  
+  for (let attempt = 0; attempt <= retries; attempt++) {
+    // Use different endpoints for retries
+    const endpoint = OVERPASS_ENDPOINTS[attempt % OVERPASS_ENDPOINTS.length];
     
-    const response = await fetch('https://overpass-api.de/api/interpreter', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: `data=${encodeURIComponent(query)}`,
-      signal: controller.signal,
-    });
-    
-    clearTimeout(timeoutId);
-    
-    if (response.status === 429) {
-      console.log('Overpass API rate limited, returning empty result');
-      return { elements: [] };
+    try {
+      const controller = new AbortController();
+      const timeoutId = setTimeout(() => controller.abort(), timeout);
+      
+      const response = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: `data=${encodeURIComponent(query)}`,
+        signal: controller.signal,
+      });
+      
+      clearTimeout(timeoutId);
+      
+      if (response.status === 429) {
+        console.log(`Overpass API rate limited (attempt ${attempt + 1}), trying next endpoint...`);
+        lastError = new Error('Rate limited');
+        // Wait a bit before retrying
+        if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      
+      if (response.status === 504 || response.status === 503) {
+        console.log(`Overpass API timeout/unavailable (attempt ${attempt + 1}), trying next endpoint...`);
+        lastError = new Error(`Status ${response.status}`);
+        if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      
+      if (!response.ok) {
+        console.log(`Overpass API error ${response.status} (attempt ${attempt + 1})`);
+        lastError = new Error(`Status ${response.status}`);
+        if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
+        continue;
+      }
+      
+      const data = await response.json();
+      return data;
+      
+    } catch (error: any) {
+      if (error.name === 'AbortError') {
+        console.log(`Overpass API request timed out (attempt ${attempt + 1})`);
+      } else {
+        console.log(`Overpass API error: ${error.message} (attempt ${attempt + 1})`);
+      }
+      lastError = error;
+      if (attempt < retries) await new Promise(r => setTimeout(r, 500 * (attempt + 1)));
     }
-    
-    if (response.status === 504 || response.status === 503) {
-      console.log('Overpass API timeout/unavailable, returning empty result');
-      return { elements: [] };
-    }
-    
-    if (!response.ok) {
-      console.log(`Overpass API error ${response.status}, returning empty result`);
-      return { elements: [] };
-    }
-    
-    return await response.json();
-  } catch (error: any) {
-    if (error.name === 'AbortError') {
-      console.log('Overpass API request timed out, returning empty result');
-    } else {
-      console.log(`Overpass API error: ${error.message}, returning empty result`);
-    }
-    return { elements: [] };
   }
+  
+  console.log(`Overpass API failed after ${retries + 1} attempts, returning empty result`);
+  return { elements: [] };
 }
 
 // ============ GEOCODING & LOCATION ============
@@ -168,20 +195,58 @@ export async function searchCities(countryCode: string) {
 // ============ COUNTRY INFORMATION ============
 
 export async function getCountryInfo(countryName: string) {
+  // Validate input
+  if (!countryName || typeof countryName !== 'string' || countryName.trim() === '') {
+    console.log('REST Countries: Invalid country name, returning null');
+    return null;
+  }
+  
+  // Normalize country name - try to extract ASCII name for API
+  let searchName = countryName.trim();
+  
+  // If the name contains non-ASCII characters, try the translation endpoint first
+  const hasNonAscii = /[^\x00-\x7F]/.test(searchName);
+  
   try {
-    const response = await fetch(
-      `https://restcountries.com/v3.1/name/${encodeURIComponent(countryName)}?fullText=false`,
-      { 
-        next: { revalidate: 86400 * 7 }, // Cache for a week
-        signal: AbortSignal.timeout(10000), // 10 second timeout
+    let response;
+    let data;
+    
+    if (hasNonAscii) {
+      // Try translation endpoint for non-English names
+      response = await fetch(
+        `https://restcountries.com/v3.1/translation/${encodeURIComponent(searchName)}`,
+        { 
+          next: { revalidate: 86400 * 7 },
+          signal: AbortSignal.timeout(10000),
+        }
+      );
+      
+      if (!response.ok) {
+        // Fallback: try all countries and search
+        console.log(`REST Countries translation lookup failed, trying name search`);
+        response = await fetch(
+          `https://restcountries.com/v3.1/name/${encodeURIComponent(searchName)}?fullText=false`,
+          { 
+            next: { revalidate: 86400 * 7 },
+            signal: AbortSignal.timeout(10000),
+          }
+        );
       }
-    );
+    } else {
+      response = await fetch(
+        `https://restcountries.com/v3.1/name/${encodeURIComponent(searchName)}?fullText=false`,
+        { 
+          next: { revalidate: 86400 * 7 },
+          signal: AbortSignal.timeout(10000),
+        }
+      );
+    }
     
     if (!response.ok) {
       console.log(`REST Countries API failed: ${response.status}, returning null`);
       return null;
     }
-    const data = await response.json();
+    data = await response.json();
     
     if (!data || data.length === 0) return null;
     
@@ -222,72 +287,129 @@ export async function getCountryInfo(countryName: string) {
 // ============ WIKIPEDIA ============
 
 export async function getWikipediaSummary(title: string, lang: string = 'en') {
-  const response = await fetch(
-    `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
-    { 
-      headers: { 'User-Agent': USER_AGENT },
-      next: { revalidate: 86400 }
-    }
-  );
-  
-  if (!response.ok) {
-    if (response.status === 404) return null;
-    throw new Error(`Wikipedia API failed: ${response.status}`);
+  if (!title || title.trim() === '') {
+    return null;
   }
   
-  const data = await response.json();
-  return {
-    title: data.title,
-    extract: data.extract,
-    description: data.description,
-    thumbnail: data.thumbnail?.source,
-    originalImage: data.originalimage?.source,
-    coordinates: data.coordinates,
-    url: data.content_urls?.desktop?.page,
-  };
+  try {
+    const response = await fetch(
+      `https://${lang}.wikipedia.org/api/rest_v1/page/summary/${encodeURIComponent(title)}`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+    
+    if (!response.ok) {
+      if (response.status === 404) return null;
+      console.log(`Wikipedia API failed: ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    return {
+      title: data.title,
+      extract: data.extract,
+      description: data.description,
+      thumbnail: data.thumbnail?.source,
+      originalImage: data.originalimage?.source,
+      coordinates: data.coordinates,
+      url: data.content_urls?.desktop?.page,
+    };
+  } catch (error: any) {
+    console.log(`Wikipedia summary error: ${error.message}`);
+    return null;
+  }
 }
 
 export async function searchWikipedia(query: string, limit: number = 10) {
-  const response = await fetch(
-    `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=${limit}&format=json&origin=*`,
-    { headers: { 'User-Agent': USER_AGENT } }
-  );
+  if (!query || query.trim() === '') {
+    return [];
+  }
   
-  if (!response.ok) throw new Error(`Wikipedia search failed: ${response.status}`);
-  const [, titles, descriptions, urls] = await response.json();
-  
-  return titles.map((title: string, i: number) => ({
-    title,
-    description: descriptions[i],
-    url: urls[i],
-  }));
+  try {
+    const response = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=opensearch&search=${encodeURIComponent(query)}&limit=${limit}&format=json&origin=*`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`Wikipedia search failed: ${response.status}`);
+      return [];
+    }
+    
+    const data = await response.json();
+    if (!Array.isArray(data) || data.length < 4) {
+      return [];
+    }
+    
+    const [, titles, descriptions, urls] = data;
+    
+    if (!Array.isArray(titles)) {
+      return [];
+    }
+    
+    return titles.map((title: string, i: number) => ({
+      title,
+      description: descriptions?.[i] || '',
+      url: urls?.[i] || '',
+    }));
+  } catch (error: any) {
+    console.log(`Wikipedia search error: ${error.message}`);
+    return [];
+  }
 }
 
 export async function getWikipediaContent(title: string) {
-  const response = await fetch(
-    `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=extracts|images|coordinates|categories&exintro=1&explaintext=1&format=json&origin=*`,
-    { headers: { 'User-Agent': USER_AGENT } }
-  );
+  if (!title || title.trim() === '') {
+    return null;
+  }
   
-  if (!response.ok) throw new Error(`Wikipedia content failed: ${response.status}`);
-  const data = await response.json();
-  const pages = data.query?.pages || {};
-  const page = Object.values(pages)[0] as any;
-  
-  if (!page || page.missing) return null;
-  
-  return {
-    title: page.title,
-    extract: page.extract,
-    coordinates: page.coordinates?.[0],
-    images: page.images?.map((img: any) => img.title),
-    categories: page.categories?.map((cat: any) => cat.title.replace('Category:', '')),
-  };
+  try {
+    const response = await fetch(
+      `https://en.wikipedia.org/w/api.php?action=query&titles=${encodeURIComponent(title)}&prop=extracts|images|coordinates|categories&exintro=1&explaintext=1&format=json&origin=*`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`Wikipedia content failed: ${response.status}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    const pages = data.query?.pages || {};
+    const page = Object.values(pages)[0] as any;
+    
+    if (!page || page.missing) return null;
+    
+    return {
+      title: page.title,
+      extract: page.extract,
+      coordinates: page.coordinates?.[0],
+      images: page.images?.map((img: any) => img.title) || [],
+      categories: page.categories?.map((cat: any) => cat.title?.replace('Category:', '')) || [],
+    };
+  } catch (error: any) {
+    console.log(`Wikipedia content error: ${error.message}`);
+    return null;
+  }
 }
 
 // ============ IMAGES (Unsplash - requires API key) ============
 
 export async function searchImages(query: string, perPage: number = 10) {
+  if (!query || query.trim() === '') {
+    console.log('Image search: Empty query, returning empty array');
+    return [];
+  }
+  
   const accessKey = process.env.UNSPLASH_ACCESS_KEY;
   
   if (!accessKey) {
@@ -295,54 +417,85 @@ export async function searchImages(query: string, perPage: number = 10) {
     return searchWikimediaImages(query, perPage);
   }
   
-  const response = await fetch(
-    `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query + ' travel')}&per_page=${perPage}&orientation=landscape`,
-    { 
-      headers: { 'Authorization': `Client-ID ${accessKey}` },
-      next: { revalidate: 3600 }
+  try {
+    const response = await fetch(
+      `https://api.unsplash.com/search/photos?query=${encodeURIComponent(query + ' travel')}&per_page=${perPage}&orientation=landscape`,
+      { 
+        headers: { 'Authorization': `Client-ID ${accessKey}` },
+        next: { revalidate: 3600 },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`Unsplash API failed: ${response.status}, falling back to Wikimedia`);
+      return searchWikimediaImages(query, perPage);
     }
-  );
-  
-  if (!response.ok) throw new Error(`Unsplash API failed: ${response.status}`);
-  const data = await response.json();
-  
-  return data.results.map((img: any) => ({
-    id: img.id,
-    url: img.urls.regular,
-    thumb: img.urls.thumb,
-    alt: img.alt_description || img.description || query,
-    credit: img.user.name,
-    creditUrl: img.user.links.html,
-    downloadUrl: img.links.download,
-  }));
+    
+    const data = await response.json();
+    
+    if (!data.results || !Array.isArray(data.results)) {
+      console.log('Unsplash returned invalid data, falling back to Wikimedia');
+      return searchWikimediaImages(query, perPage);
+    }
+    
+    return data.results.map((img: any) => ({
+      id: img.id,
+      url: img.urls?.regular || img.urls?.small,
+      thumb: img.urls?.thumb || img.urls?.small,
+      alt: img.alt_description || img.description || query,
+      credit: img.user?.name || 'Unsplash',
+      creditUrl: img.user?.links?.html,
+      downloadUrl: img.links?.download,
+    })).filter((img: any) => img.url);
+  } catch (error: any) {
+    console.log(`Unsplash search failed: ${error.message}, falling back to Wikimedia`);
+    return searchWikimediaImages(query, perPage);
+  }
 }
 
 export async function searchWikimediaImages(query: string, limit: number = 10) {
-  const response = await fetch(
-    `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrnamespace=6&prop=imageinfo&iiprop=url|extmetadata|size&iiurlwidth=800&format=json&origin=*`,
-    { headers: { 'User-Agent': USER_AGENT } }
-  );
+  if (!query || query.trim() === '') {
+    return [];
+  }
   
-  if (!response.ok) throw new Error(`Wikimedia API failed: ${response.status}`);
-  const data = await response.json();
-  const pages = data.query?.pages || {};
-  
-  return Object.values(pages)
-    .filter((p: any) => p.imageinfo?.[0]?.thumburl)
-    .slice(0, limit)
-    .map((p: any) => {
-      const info = p.imageinfo[0];
-      const meta = info.extmetadata || {};
-      return {
-        id: p.pageid,
-        url: info.thumburl,
-        thumb: info.thumburl,
-        fullUrl: info.url,
-        alt: meta.ImageDescription?.value?.replace(/<[^>]*>/g, '') || p.title,
-        credit: meta.Artist?.value?.replace(/<[^>]*>/g, '') || 'Wikimedia Commons',
-        license: meta.LicenseShortName?.value || 'Unknown',
-      };
-    });
+  try {
+    const response = await fetch(
+      `https://commons.wikimedia.org/w/api.php?action=query&generator=search&gsrsearch=${encodeURIComponent(query)}&gsrnamespace=6&prop=imageinfo&iiprop=url|extmetadata|size&iiurlwidth=800&format=json&origin=*`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`Wikimedia API failed: ${response.status}, returning empty array`);
+      return [];
+    }
+    
+    const data = await response.json();
+    const pages = data.query?.pages || {};
+    
+    return Object.values(pages)
+      .filter((p: any) => p.imageinfo?.[0]?.thumburl)
+      .slice(0, limit)
+      .map((p: any) => {
+        const info = p.imageinfo[0];
+        const meta = info.extmetadata || {};
+        return {
+          id: p.pageid,
+          url: info.thumburl,
+          thumb: info.thumburl,
+          fullUrl: info.url,
+          alt: meta.ImageDescription?.value?.replace(/<[^>]*>/g, '') || p.title,
+          credit: meta.Artist?.value?.replace(/<[^>]*>/g, '') || 'Wikimedia Commons',
+          license: meta.LicenseShortName?.value || 'Unknown',
+        };
+      });
+  } catch (error: any) {
+    console.log(`Wikimedia search failed: ${error.message}, returning empty array`);
+    return [];
+  }
 }
 
 // ============ WEATHER ============
@@ -398,55 +551,125 @@ export async function convertCurrency(amount: number, from: string, to: string) 
 // ============ TRAVEL SAFETY ============
 
 export async function getTravelAdvisory(countryCode?: string) {
-  const url = countryCode 
-    ? `https://www.travel-advisory.info/api?countrycode=${countryCode}`
-    : 'https://www.travel-advisory.info/api';
-    
-  const response = await fetch(url, { next: { revalidate: 86400 } });
+  if (countryCode && (typeof countryCode !== 'string' || countryCode.trim() === '')) {
+    console.log('Travel Advisory: Invalid country code, returning null');
+    return null;
+  }
   
-  if (!response.ok) throw new Error(`Travel Advisory API failed: ${response.status}`);
-  return response.json();
+  const url = countryCode 
+    ? `https://www.travel-advisory.info/api?countrycode=${countryCode.toUpperCase().trim()}`
+    : 'https://www.travel-advisory.info/api';
+  
+  try {
+    const response = await fetch(url, { 
+      next: { revalidate: 86400 },
+      signal: AbortSignal.timeout(10000)
+    });
+    
+    if (!response.ok) {
+      console.log(`Travel Advisory API failed: ${response.status}, returning null`);
+      return null;
+    }
+    return response.json();
+  } catch (error: any) {
+    console.log(`Travel Advisory fetch failed: ${error.message}, returning null`);
+    return null;
+  }
 }
 
 export async function getUKTravelAdvice(country: string) {
-  const slug = country.toLowerCase().replace(/\s+/g, '-');
-  const response = await fetch(
-    `https://www.gov.uk/api/content/foreign-travel-advice/${slug}`,
-    { next: { revalidate: 86400 } }
-  );
-  
-  if (!response.ok) {
-    if (response.status === 404) return null;
-    throw new Error(`UK FCDO API failed: ${response.status}`);
+  // Validate input to prevent null reference errors
+  if (!country || typeof country !== 'string' || country.trim() === '') {
+    console.log('UK FCDO: Invalid country parameter, returning null');
+    return null;
   }
-  return response.json();
+  
+  // Normalize the country name - only use ASCII characters for the slug
+  const normalizedCountry = country
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '') // Remove diacritics
+    .replace(/[^a-zA-Z\s-]/g, '') // Remove non-ASCII
+    .trim();
+  
+  if (!normalizedCountry) {
+    console.log('UK FCDO: Country name contains no ASCII characters, returning null');
+    return null;
+  }
+  
+  const slug = normalizedCountry.toLowerCase().replace(/\s+/g, '-');
+  
+  try {
+    const response = await fetch(
+      `https://www.gov.uk/api/content/foreign-travel-advice/${slug}`,
+      { 
+        next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(10000)
+      }
+    );
+    
+    if (!response.ok) {
+      if (response.status === 404) {
+        console.log(`UK FCDO: No advice found for ${slug}`);
+        return null;
+      }
+      console.log(`UK FCDO API failed: ${response.status}`);
+      return null;
+    }
+    return response.json();
+  } catch (error: any) {
+    console.log(`UK FCDO fetch failed: ${error.message}`);
+    return null;
+  }
 }
 
 // ============ WEB SEARCH (DuckDuckGo) ============
 
 export async function webSearch(query: string) {
   // DuckDuckGo Instant Answer API - can return empty responses
+  if (!query || query.trim() === '') {
+    console.log('DuckDuckGo: Empty query, skipping');
+    return null;
+  }
+  
   try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
+    
     const response = await fetch(
       `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
       { 
         headers: { 'User-Agent': USER_AGENT },
-        signal: AbortSignal.timeout(5000) // 5 second timeout
+        signal: controller.signal
       }
     );
     
+    clearTimeout(timeoutId);
+    
     if (!response.ok) {
-      console.log(`DuckDuckGo returned ${response.status}, skipping`);
+      console.log(`DuckDuckGo returned ${response.status}, returning null`);
       return null;
     }
     
     const text = await response.text();
-    if (!text || text.trim() === '') {
-      console.log('DuckDuckGo returned empty response, skipping');
+    if (!text || text.trim() === '' || text.trim() === '{}') {
+      console.log('DuckDuckGo returned empty response, returning null');
       return null;
     }
     
-    const data = JSON.parse(text);
+    // Safely parse JSON
+    let data;
+    try {
+      data = JSON.parse(text);
+    } catch (parseError) {
+      console.log('DuckDuckGo returned invalid JSON, returning null');
+      return null;
+    }
+    
+    // Validate the parsed data
+    if (!data || typeof data !== 'object') {
+      console.log('DuckDuckGo returned non-object data, returning null');
+      return null;
+    }
     
     return {
       abstract: data.Abstract || null,
@@ -454,14 +677,20 @@ export async function webSearch(query: string) {
       abstractURL: data.AbstractURL || null,
       image: data.Image || null,
       heading: data.Heading || null,
-      relatedTopics: data.RelatedTopics?.slice(0, 5).map((t: any) => ({
-        text: t.Text,
-        url: t.FirstURL,
-      })) || [],
+      relatedTopics: Array.isArray(data.RelatedTopics) 
+        ? data.RelatedTopics.slice(0, 5).map((t: any) => ({
+            text: t?.Text || '',
+            url: t?.FirstURL || '',
+          })).filter((t: any) => t.text || t.url)
+        : [],
       type: data.Type || null,
     };
   } catch (error: any) {
-    console.log(`DuckDuckGo search failed: ${error.message}, skipping`);
+    if (error.name === 'AbortError') {
+      console.log('DuckDuckGo request timed out, returning null');
+    } else {
+      console.log(`DuckDuckGo search failed: ${error.message}, returning null`);
+    }
     return null;
   }
 }
