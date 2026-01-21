@@ -19,6 +19,16 @@ interface OverviewSectionProps {
   imageUrl?: string;
 }
 
+// Helper to safely get string value
+function safeString(value: any, fallback: string): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'object' && value !== null) {
+    // If it's an object, try to get a meaningful string from it
+    return value.description || value.name || value.value || JSON.stringify(value);
+  }
+  return fallback;
+}
+
 export function OverviewSection({ overview, destination, imageUrl }: OverviewSectionProps) {
   // Return null if no overview data - prevents client-side crash
   if (!overview) {
@@ -69,22 +79,22 @@ export function OverviewSection({ overview, destination, imageUrl }: OverviewSec
         <InfoCard 
           icon={<Calendar className="w-5 h-5" />}
           label="Best Time"
-          value={(overview?.bestTimeToVisit || 'Check local seasons').split('.')[0]}
+          value={safeString(overview?.bestTimeToVisit, 'Check local seasons').split('.')[0]}
         />
         <InfoCard 
           icon={<Sun className="w-5 h-5" />}
           label="Climate"
-          value={(overview?.climate || 'Varies by region').split('.')[0]}
+          value={safeString(overview?.climate, 'Varies by region').split('.')[0]}
         />
         <InfoCard 
           icon={<CreditCard className="w-5 h-5" />}
           label="Currency"
-          value={(overview?.currency || 'Local currency').split('.')[0]}
+          value={safeString(overview?.currency, 'Local currency').split('.')[0]}
         />
         <InfoCard 
           icon={<Languages className="w-5 h-5" />}
           label="Language"
-          value={(overview?.language || 'Local language').split('.')[0]}
+          value={safeString(overview?.language, 'Local language').split('.')[0]}
         />
       </div>
       
