@@ -3,32 +3,91 @@
 
 const USER_AGENT = 'YouTravel/1.0 (https://youtravel.app; contact@youtravel.app)';
 
+// Helper for Overpass API with timeout and rate limit handling
+async function overpassQuery(query: string, timeout: number = 15000): Promise<any> {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), timeout);
+    
+    const response = await fetch('https://overpass-api.de/api/interpreter', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+      body: `data=${encodeURIComponent(query)}`,
+      signal: controller.signal,
+    });
+    
+    clearTimeout(timeoutId);
+    
+    if (response.status === 429) {
+      console.log('Overpass API rate limited, returning empty result');
+      return { elements: [] };
+    }
+    
+    if (response.status === 504 || response.status === 503) {
+      console.log('Overpass API timeout/unavailable, returning empty result');
+      return { elements: [] };
+    }
+    
+    if (!response.ok) {
+      console.log(`Overpass API error ${response.status}, returning empty result`);
+      return { elements: [] };
+    }
+    
+    return await response.json();
+  } catch (error: any) {
+    if (error.name === 'AbortError') {
+      console.log('Overpass API request timed out, returning empty result');
+    } else {
+      console.log(`Overpass API error: ${error.message}, returning empty result`);
+    }
+    return { elements: [] };
+  }
+}
+
 // ============ GEOCODING & LOCATION ============
 
 export async function geocodeLocation(query: string) {
-  const response = await fetch(
-    `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&extratags=1&limit=5`,
-    { 
-      headers: { 'User-Agent': USER_AGENT },
-      next: { revalidate: 86400 } // Cache for 24 hours
+  try {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(query)}&format=json&addressdetails=1&extratags=1&limit=5`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        next: { revalidate: 86400 }, // Cache for 24 hours
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`Geocoding failed: ${response.status}, returning empty array`);
+      return [];
     }
-  );
-  
-  if (!response.ok) throw new Error(`Geocoding failed: ${response.status}`);
-  return response.json();
+    return response.json();
+  } catch (error: any) {
+    console.log(`Geocoding error: ${error.message}, returning empty array`);
+    return [];
+  }
 }
 
 export async function reverseGeocode(lat: number, lon: number) {
-  const response = await fetch(
-    `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1`,
-    { 
-      headers: { 'User-Agent': USER_AGENT },
-      next: { revalidate: 86400 }
+  try {
+    const response = await fetch(
+      `https://nominatim.openstreetmap.org/reverse?lat=${lat}&lon=${lon}&format=json&addressdetails=1`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        next: { revalidate: 86400 },
+        signal: AbortSignal.timeout(10000),
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`Reverse geocoding failed: ${response.status}, returning null`);
+      return null;
     }
-  );
-  
-  if (!response.ok) throw new Error(`Reverse geocoding failed: ${response.status}`);
-  return response.json();
+    return response.json();
+  } catch (error: any) {
+    console.log(`Reverse geocoding error: ${error.message}, returning null`);
+    return null;
+  }
 }
 
 // ============ PLACES & ATTRACTIONS (OpenStreetMap Overpass API) ============
@@ -60,14 +119,7 @@ export async function searchPlaces(lat: number, lon: number, radius: number = 50
     out body center 50;
   `;
 
-  const response = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
-  });
-
-  if (!response.ok) throw new Error(`Overpass API failed: ${response.status}`);
-  const data = await response.json();
+  const data = await overpassQuery(query);
   
   // Transform OSM data to our format
   return data.elements.map((el: any) => ({
@@ -97,14 +149,7 @@ export async function searchCities(countryCode: string) {
     out body 100;
   `;
 
-  const response = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
-  });
-
-  if (!response.ok) throw new Error(`Overpass API failed: ${response.status}`);
-  const data = await response.json();
+  const data = await overpassQuery(query, 65000); // 65 second timeout for this longer query
   
   return data.elements
     .map((el: any) => ({
@@ -123,44 +168,55 @@ export async function searchCities(countryCode: string) {
 // ============ COUNTRY INFORMATION ============
 
 export async function getCountryInfo(countryName: string) {
-  const response = await fetch(
-    `https://restcountries.com/v3.1/name/${encodeURIComponent(countryName)}?fullText=false`,
-    { next: { revalidate: 86400 * 7 } } // Cache for a week
-  );
-  
-  if (!response.ok) throw new Error(`REST Countries API failed: ${response.status}`);
-  const data = await response.json();
-  
-  if (!data || data.length === 0) return null;
-  
-  const country = data[0];
-  return {
-    name: country.name?.common,
-    officialName: country.name?.official,
-    capital: country.capital?.[0],
-    region: country.region,
-    subregion: country.subregion,
-    population: country.population,
-    area: country.area,
-    languages: Object.values(country.languages || {}),
-    currencies: Object.entries(country.currencies || {}).map(([code, info]: [string, any]) => ({
-      code,
-      name: info.name,
-      symbol: info.symbol,
-    })),
-    timezones: country.timezones,
-    borders: country.borders || [],
-    flag: country.flags?.svg || country.flags?.png,
-    coatOfArms: country.coatOfArms?.svg,
-    maps: country.maps,
-    latlng: country.latlng,
-    landlocked: country.landlocked,
-    unMember: country.unMember,
-    cca2: country.cca2,
-    cca3: country.cca3,
-    callingCodes: country.idd?.root ? [country.idd.root + (country.idd.suffixes?.[0] || '')] : [],
-    drivingSide: country.car?.side,
-  };
+  try {
+    const response = await fetch(
+      `https://restcountries.com/v3.1/name/${encodeURIComponent(countryName)}?fullText=false`,
+      { 
+        next: { revalidate: 86400 * 7 }, // Cache for a week
+        signal: AbortSignal.timeout(10000), // 10 second timeout
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`REST Countries API failed: ${response.status}, returning null`);
+      return null;
+    }
+    const data = await response.json();
+    
+    if (!data || data.length === 0) return null;
+    
+    const country = data[0];
+    return {
+      name: country.name?.common,
+      officialName: country.name?.official,
+      capital: country.capital?.[0],
+      region: country.region,
+      subregion: country.subregion,
+      population: country.population,
+      area: country.area,
+      languages: Object.values(country.languages || {}),
+      currencies: Object.entries(country.currencies || {}).map(([code, info]: [string, any]) => ({
+        code,
+        name: info.name,
+        symbol: info.symbol,
+      })),
+      timezones: country.timezones,
+      borders: country.borders || [],
+      flag: country.flags?.svg || country.flags?.png,
+      coatOfArms: country.coatOfArms?.svg,
+      maps: country.maps,
+      latlng: country.latlng,
+      landlocked: country.landlocked,
+      unMember: country.unMember,
+      cca2: country.cca2,
+      cca3: country.cca3,
+      callingCodes: country.idd?.root ? [country.idd.root + (country.idd.suffixes?.[0] || '')] : [],
+      drivingSide: country.car?.side,
+    };
+  } catch (error: any) {
+    console.log(`Country info fetch failed: ${error.message}, returning null`);
+    return null;
+  }
 }
 
 // ============ WIKIPEDIA ============
@@ -369,28 +425,45 @@ export async function getUKTravelAdvice(country: string) {
 // ============ WEB SEARCH (DuckDuckGo) ============
 
 export async function webSearch(query: string) {
-  // DuckDuckGo Instant Answer API
-  const response = await fetch(
-    `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
-    { headers: { 'User-Agent': USER_AGENT } }
-  );
-  
-  if (!response.ok) throw new Error(`DuckDuckGo API failed: ${response.status}`);
-  const data = await response.json();
-  
-  return {
-    abstract: data.Abstract,
-    abstractSource: data.AbstractSource,
-    abstractURL: data.AbstractURL,
-    image: data.Image,
-    heading: data.Heading,
-    relatedTopics: data.RelatedTopics?.slice(0, 10).map((t: any) => ({
-      text: t.Text,
-      url: t.FirstURL,
-    })),
-    infobox: data.Infobox,
-    type: data.Type,
-  };
+  // DuckDuckGo Instant Answer API - can return empty responses
+  try {
+    const response = await fetch(
+      `https://api.duckduckgo.com/?q=${encodeURIComponent(query)}&format=json&no_html=1&skip_disambig=1`,
+      { 
+        headers: { 'User-Agent': USER_AGENT },
+        signal: AbortSignal.timeout(5000) // 5 second timeout
+      }
+    );
+    
+    if (!response.ok) {
+      console.log(`DuckDuckGo returned ${response.status}, skipping`);
+      return null;
+    }
+    
+    const text = await response.text();
+    if (!text || text.trim() === '') {
+      console.log('DuckDuckGo returned empty response, skipping');
+      return null;
+    }
+    
+    const data = JSON.parse(text);
+    
+    return {
+      abstract: data.Abstract || null,
+      abstractSource: data.AbstractSource || null,
+      abstractURL: data.AbstractURL || null,
+      image: data.Image || null,
+      heading: data.Heading || null,
+      relatedTopics: data.RelatedTopics?.slice(0, 5).map((t: any) => ({
+        text: t.Text,
+        url: t.FirstURL,
+      })) || [],
+      type: data.Type || null,
+    };
+  } catch (error: any) {
+    console.log(`DuckDuckGo search failed: ${error.message}, skipping`);
+    return null;
+  }
 }
 
 // ============ AIRPORTS ============
@@ -405,14 +478,7 @@ export async function searchAirports(lat: number, lon: number, radius: number = 
     out body center 20;
   `;
 
-  const response = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
-  });
-
-  if (!response.ok) throw new Error(`Airport search failed: ${response.status}`);
-  const data = await response.json();
+  const data = await overpassQuery(query);
   
   return data.elements.map((el: any) => ({
     name: el.tags?.name || el.tags?.['name:en'],
@@ -438,14 +504,7 @@ export async function searchTransitStops(lat: number, lon: number, radius: numbe
     out body 50;
   `;
 
-  const response = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
-  });
-
-  if (!response.ok) throw new Error(`Transit search failed: ${response.status}`);
-  const data = await response.json();
+  const data = await overpassQuery(query);
   
   return data.elements.map((el: any) => ({
     name: el.tags?.name,
@@ -468,14 +527,7 @@ export async function searchNeighborhoods(lat: number, lon: number, radius: numb
     out body 30;
   `;
 
-  const response = await fetch('https://overpass-api.de/api/interpreter', {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-    body: `data=${encodeURIComponent(query)}`,
-  });
-
-  if (!response.ok) throw new Error(`Neighborhood search failed: ${response.status}`);
-  const data = await response.json();
+  const data = await overpassQuery(query);
   
   return data.elements.map((el: any) => ({
     name: el.tags?.name || el.tags?.['name:en'],

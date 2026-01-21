@@ -51,51 +51,56 @@ export async function executeTool(
 ): Promise<ToolResult> {
   console.log(`[Tool] Executing: ${toolName}`, JSON.stringify(args));
   
+  // Normalize common parameter names
+  const destination = args.destination || args.query || args.location || args.country || args.city;
+  const country = args.country || args.destination;
+  const city = args.city || args.destination;
+  
   switch (toolName) {
     case 'search_destination':
-      return executeSearchDestination(args.query);
+      return executeSearchDestination(destination);
     
     case 'get_country_info':
-      return executeGetCountryInfo(args.country);
+      return executeGetCountryInfo(country);
     
     case 'get_city_info':
-      return executeGetCityInfo(args.city, args.country);
+      return executeGetCityInfo(destination, args.country);
     
     case 'search_attractions':
-      return executeSearchAttractions(args.location, args.category);
+      return executeSearchAttractions(destination, args.category || args.type);
     
     case 'get_neighborhoods':
-      return executeGetNeighborhoods(args.city, args.country);
+      return executeGetNeighborhoods(city, args.country);
     
     case 'get_budget_info':
-      return executeGetBudgetInfo(args.destination, args.currency);
+      return executeGetBudgetInfo(destination, args.currency || args.baseCurrency);
     
     case 'get_transportation':
-      return executeGetTransportation(args.destination);
+      return executeGetTransportation(destination);
     
     case 'get_safety_info':
-      return executeGetSafetyInfo(args.country);
+      return executeGetSafetyInfo(country);
     
     case 'get_culture_info':
-      return executeGetCultureInfo(args.destination);
+      return executeGetCultureInfo(destination);
     
     case 'get_weather':
-      return executeGetWeather(args.location);
+      return executeGetWeather(destination, args.lat, args.lon);
     
     case 'search_images':
-      return executeSearchImages(args.query, args.count);
+      return executeSearchImages(args.query || destination, args.count);
     
     case 'get_visa_info':
-      return executeGetVisaInfo(args.destination, args.nationality);
+      return executeGetVisaInfo(destination, args.nationality);
     
     case 'get_local_tips':
-      return executeGetLocalTips(args.destination);
+      return executeGetLocalTips(destination);
     
     case 'compare_destinations':
       return executeCompareDestinations(args.destinations);
     
     case 'finalize_guide':
-      return executeFinalizeGuide(args.destination, args.collectedData);
+      return executeFinalizeGuide(destination, args.collectedData);
     
     default:
       return { success: false, error: `Unknown tool: ${toolName}` };
@@ -393,20 +398,31 @@ async function executeGetCultureInfo(destination: string): Promise<ToolResult> {
   return { success: true, data: results, source: 'Wikipedia, REST Countries, DuckDuckGo' };
 }
 
-async function executeGetWeather(location: string): Promise<ToolResult> {
+async function executeGetWeather(location: string, providedLat?: number, providedLon?: number): Promise<ToolResult> {
   console.log(`[Tool] Getting weather: ${location}`);
   
   const results: any = { location };
 
-  const geoResult = await safeApiCall(() => geocodeLocation(location), 'Nominatim');
-  if (!geoResult.success || !geoResult.data?.length) {
-    return { success: false, error: `Could not find location: ${location}` };
-  }
+  let lat: number;
+  let lon: number;
+  
+  // If lat/lon are provided, use them directly
+  if (providedLat !== undefined && providedLon !== undefined) {
+    lat = providedLat;
+    lon = providedLon;
+    results.coordinates = { lat, lon };
+  } else {
+    // Otherwise geocode the location
+    const geoResult = await safeApiCall(() => geocodeLocation(location), 'Nominatim');
+    if (!geoResult.success || !geoResult.data?.length) {
+      return { success: false, error: `Could not find location: ${location}` };
+    }
 
-  const loc = geoResult.data[0];
-  const lat = parseFloat(loc.lat);
-  const lon = parseFloat(loc.lon);
-  results.coordinates = { lat, lon };
+    const loc = geoResult.data[0];
+    lat = parseFloat(loc.lat);
+    lon = parseFloat(loc.lon);
+    results.coordinates = { lat, lon };
+  }
 
   const weatherResult = await safeApiCall(() => getWeather(lat, lon), 'Open-Meteo');
   if (weatherResult.success) results.weather = weatherResult.data;
