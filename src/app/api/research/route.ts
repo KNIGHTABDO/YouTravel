@@ -1,108 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { travelResearchTools, researchSteps } from '@/lib/tools';
+import { researchSteps } from '@/lib/tools';
 import { executeTool, getThemeForDestination, ToolResult } from '@/lib/toolExecutor';
 import { TravelGuide, ResearchStep, BudgetEstimate, TransportationGuide, SafetyInfo, CultureGuide, MapLocation } from '@/types';
 
-// GitHub Models API configuration
-const GITHUB_MODELS_ENDPOINT = 'https://models.github.ai/inference';
-const MODEL = 'openai/gpt-4.1';
-
-// Helper to truncate/summarize tool results to avoid 413 errors
-const MAX_RESULT_LENGTH = 2000; // Max characters per tool result
-
-function truncateToolResult(data: any): string {
-  if (typeof data === 'string') {
-    return data.length > MAX_RESULT_LENGTH 
-      ? data.substring(0, MAX_RESULT_LENGTH) + '... [truncated]'
-      : data;
-  }
-  
-  // For objects, create a summarized version
-  const summarized = summarizeData(data);
-  const json = JSON.stringify(summarized, null, 1);
-  
-  if (json.length > MAX_RESULT_LENGTH) {
-    return json.substring(0, MAX_RESULT_LENGTH) + '... [truncated]';
-  }
-  return json;
-}
-
-function summarizeData(data: any): any {
-  if (!data || typeof data !== 'object') return data;
-  
-  if (Array.isArray(data)) {
-    // Limit arrays to first 5 items and summarize each
-    return data.slice(0, 5).map(item => summarizeData(item));
-  }
-  
-  const summary: any = {};
-  for (const [key, value] of Object.entries(data)) {
-    // Skip very long text fields
-    if (typeof value === 'string') {
-      summary[key] = value.length > 300 ? value.substring(0, 300) + '...' : value;
-    } else if (Array.isArray(value)) {
-      summary[key] = value.slice(0, 5).map(v => 
-        typeof v === 'string' && v.length > 100 ? v.substring(0, 100) + '...' : 
-        typeof v === 'object' ? summarizeData(v) : v
-      );
-    } else if (typeof value === 'object' && value !== null) {
-      // Skip deeply nested objects like full wiki content
-      if (key === 'wikiContent' || key === 'fullContent' || key === 'html') {
-        summary[key] = '[content available]';
-      } else {
-        summary[key] = summarizeData(value);
-      }
-    } else {
-      summary[key] = value;
-    }
-  }
-  return summary;
-}
-
-// System prompt for the travel research agent
-const SYSTEM_PROMPT = `You are an autonomous travel research agent with access to REAL APIs that gather live data from the internet.
-
-Your available tools connect to:
-- Nominatim (OpenStreetMap) for location geocoding and coordinates
-- Wikipedia API for destination descriptions and summaries
-- REST Countries API for country information (language, currency, timezone, etc.)
-- OpenStreetMap Overpass API for real attractions, cities, neighborhoods, airports, transit
-- Open-Meteo for weather and climate data
-- Frankfurter for currency exchange rates  
-- Travel Advisory APIs for safety information
-- DuckDuckGo for web search and additional context
-- Image search (Unsplash/Wikimedia) for destination photos
-
-When researching a destination, follow this systematic approach:
-
-1. ALWAYS start with search_destination to get basic location info and coordinates
-2. Use get_country_info for currency, language, timezone, visa info
-3. Use get_city_info for major cities with attractions, airports, neighborhoods
-4. Use search_attractions to find real tourist sites with coordinates
-5. Use get_neighborhoods to find areas to stay with real place data
-6. Use get_budget_info for currency exchange and cost context
-7. Use get_transportation to find real airports and transit options
-8. Use get_safety_info for travel advisories
-9. Use get_culture_info for etiquette and customs
-10. Use search_images to find real photos of the destination
-11. Use get_local_tips for insider advice and common mistakes
-12. Call finalize_guide when research is complete
-
-BE THOROUGH. Each tool call fetches REAL DATA from live APIs. Take your time to gather comprehensive information. The quality of the final guide depends on how much real data you collect.
-
-After your research, you will synthesize all the real API data into a comprehensive travel guide.`;
-
-interface Message {
-  role: 'system' | 'user' | 'assistant' | 'tool';
-  content: string | null;
-  tool_calls?: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
-  }>;
-  tool_call_id?: string;
-  name?: string;
-}
+// Direct research approach - no AI orchestration needed
+// We execute real API calls in sequence and assemble the guide from collected data
 
 // Synthesize a travel guide from collected real API data
 function synthesizeGuideFromData(destination: string, data: Record<string, any>): TravelGuide {
@@ -350,110 +252,79 @@ function synthesizeGuideFromData(destination: string, data: Record<string, any>)
   return guide;
 }
 
-async function callGitHubModels(messages: Message[], hasTools: boolean = true): Promise<{
-  content: string | null;
-  tool_calls?: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
-  }>;
-}> {
-  const token = process.env.GITHUB_TOKEN;
-  
-  if (!token) {
-    // Simulate AI response for development without token
-    return simulateAIResponse(messages);
-  }
-  
-  const response = await fetch(`${GITHUB_MODELS_ENDPOINT}/chat/completions`, {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${token}`,
-      'Content-Type': 'application/json',
-    },
-    body: JSON.stringify({
-      model: MODEL,
-      messages,
-      tools: hasTools ? travelResearchTools : undefined,
-      tool_choice: hasTools ? 'auto' : undefined,
-      temperature: 0.7,
-      max_tokens: 4096,
-    }),
-  });
-  
-  if (!response.ok) {
-    const error = await response.text();
-    console.error('GitHub Models API error:', error);
-    throw new Error(`API error: ${response.status}`);
-  }
-  
-  const data = await response.json();
-  const choice = data.choices[0];
-  
-  return {
-    content: choice.message.content,
-    tool_calls: choice.message.tool_calls,
-  };
+// Define the research sequence - each step executes real API calls
+interface ResearchTask {
+  toolName: string;
+  getArgs: (destination: string, collectedData: Record<string, any>) => Record<string, any>;
+  stepIndex: number;
 }
 
-// Simulate AI responses for development without API token
-// These match our real API-connected tools
-function simulateAIResponse(messages: Message[]): {
-  content: string | null;
-  tool_calls?: Array<{
-    id: string;
-    type: 'function';
-    function: { name: string; arguments: string };
-  }>;
-} {
-  const lastMessage = messages[messages.length - 1];
-  
-  // Check if we've been calling tools (look for tool messages)
-  const toolCallCount = messages.filter(m => m.role === 'tool').length;
-  
-  // If we have enough tool calls, return final response
-  if (toolCallCount >= 12) {
-    return {
-      content: 'Research complete. I have gathered comprehensive REAL data from multiple APIs including geocoding, Wikipedia, OpenStreetMap, weather, currency exchange, and travel advisories. The travel guide is ready with authentic information.',
-      tool_calls: undefined,
-    };
-  }
-  
-  // Extract destination from user message
-  const userMessage = messages.find(m => m.role === 'user');
-  const destination = userMessage?.content?.replace('Research this destination thoroughly: ', '') || 'destination';
-  
-  // Simulate progressive tool calls - these match our real API tools
-  const toolSequence = [
-    { name: 'search_destination', args: { destination } },
-    { name: 'get_country_info', args: { country: destination } },
-    { name: 'get_city_info', args: { destination, limit: '10' } },
-    { name: 'search_attractions', args: { destination, type: 'all', limit: '20' } },
-    { name: 'get_neighborhoods', args: { city: destination, limit: '10' } },
-    { name: 'get_budget_info', args: { destination, baseCurrency: 'USD' } },
-    { name: 'get_transportation', args: { destination } },
-    { name: 'get_safety_info', args: { destination } },
-    { name: 'get_culture_info', args: { destination } },
-    { name: 'get_weather', args: { destination } },
-    { name: 'get_local_tips', args: { destination } },
-    { name: 'search_images', args: { query: `${destination} travel tourism`, count: '12' } },
-    { name: 'finalize_guide', args: { destination, summary: 'Research complete with real API data' } },
-  ];
-  
-  const nextTool = toolSequence[toolCallCount] || toolSequence[toolSequence.length - 1];
-  
-  return {
-    content: null,
-    tool_calls: [{
-      id: `call_${Date.now()}_${toolCallCount}`,
-      type: 'function',
-      function: {
-        name: nextTool.name,
-        arguments: JSON.stringify(nextTool.args),
-      },
-    }],
-  };
-}
+const RESEARCH_SEQUENCE: ResearchTask[] = [
+  { 
+    toolName: 'search_destination', 
+    getArgs: (dest) => ({ destination: dest }),
+    stepIndex: 1 
+  },
+  { 
+    toolName: 'get_country_info', 
+    getArgs: (dest, data) => ({ country: data.search_destination?.location?.country || dest }),
+    stepIndex: 1 
+  },
+  { 
+    toolName: 'get_city_info', 
+    getArgs: (dest) => ({ destination: dest, limit: '8' }),
+    stepIndex: 2 
+  },
+  { 
+    toolName: 'search_attractions', 
+    getArgs: (dest) => ({ destination: dest, type: 'all', limit: '15' }),
+    stepIndex: 3 
+  },
+  { 
+    toolName: 'get_neighborhoods', 
+    getArgs: (dest) => ({ city: dest, limit: '8' }),
+    stepIndex: 4 
+  },
+  { 
+    toolName: 'get_budget_info', 
+    getArgs: (dest) => ({ destination: dest, baseCurrency: 'USD' }),
+    stepIndex: 5 
+  },
+  { 
+    toolName: 'get_weather', 
+    getArgs: (dest, data) => ({ 
+      destination: dest,
+      lat: data.search_destination?.location?.lat,
+      lon: data.search_destination?.location?.lon 
+    }),
+    stepIndex: 5 
+  },
+  { 
+    toolName: 'get_transportation', 
+    getArgs: (dest) => ({ destination: dest }),
+    stepIndex: 6 
+  },
+  { 
+    toolName: 'get_safety_info', 
+    getArgs: (dest, data) => ({ destination: data.search_destination?.location?.country || dest }),
+    stepIndex: 7 
+  },
+  { 
+    toolName: 'get_culture_info', 
+    getArgs: (dest) => ({ destination: dest }),
+    stepIndex: 8 
+  },
+  { 
+    toolName: 'get_local_tips', 
+    getArgs: (dest) => ({ destination: dest }),
+    stepIndex: 9 
+  },
+  { 
+    toolName: 'search_images', 
+    getArgs: (dest) => ({ query: `${dest} travel landmarks tourism`, count: '15' }),
+    stepIndex: 10 
+  },
+];
 
 export async function POST(request: NextRequest) {
   const encoder = new TextEncoder();
@@ -472,20 +343,24 @@ export async function POST(request: NextRequest) {
           return;
         }
         
+        console.log(`[Research] Starting research for: ${destination}`);
+        
         // Send initial step
         const steps = [...researchSteps];
         let currentStepIndex = 0;
         
         const sendStep = (index: number, status: 'active' | 'complete') => {
-          const step: ResearchStep = {
-            ...steps[index],
-            status,
-            toolCalls: [],
-          };
-          controller.enqueue(encoder.encode(JSON.stringify({
-            type: 'step',
-            data: { step, stepIndex: index }
-          }) + '\n'));
+          if (index >= 0 && index < steps.length) {
+            const step: ResearchStep = {
+              ...steps[index],
+              status,
+              toolCalls: [],
+            };
+            controller.enqueue(encoder.encode(JSON.stringify({
+              type: 'step',
+              data: { step, stepIndex: index }
+            }) + '\n'));
+          }
         };
         
         const sendProgress = (progress: number) => {
@@ -495,14 +370,14 @@ export async function POST(request: NextRequest) {
           }) + '\n'));
         };
         
-        const sendToolCall = (toolName: string) => {
+        const sendToolCall = (toolName: string, status: 'running' | 'complete' = 'running') => {
           controller.enqueue(encoder.encode(JSON.stringify({
             type: 'tool_call',
             data: { 
               toolCall: { 
                 toolName, 
                 startTime: Date.now(), 
-                status: 'running' 
+                status 
               } 
             }
           }) + '\n'));
@@ -512,108 +387,61 @@ export async function POST(request: NextRequest) {
         sendStep(0, 'active');
         sendProgress(5);
         
-        // Build conversation with AI
-        const messages: Message[] = [
-          { role: 'system', content: SYSTEM_PROMPT },
-          { role: 'user', content: `Research this destination thoroughly: ${destination}` }
-        ];
-        
-        let toolCallCount = 0;
-        const maxToolCalls = 20; // Increased to allow more thorough research
-        let researchComplete = false;
-        
-        // Collect data from all tool calls for guide generation
+        // Collect data from all tool calls
         const collectedData: Record<string, any> = {};
         
-        // Simulate progressive research with tool calls
-        while (!researchComplete && toolCallCount < maxToolCalls) {
-          // Call the AI
-          const response = await callGitHubModels(messages, true);
+        // Execute each research task in sequence
+        for (let i = 0; i < RESEARCH_SEQUENCE.length; i++) {
+          const task = RESEARCH_SEQUENCE[i];
           
-          if (response.tool_calls && response.tool_calls.length > 0) {
-            // AI wants to call tools
-            for (const toolCall of response.tool_calls) {
-              const toolName = toolCall.function.name;
-              const toolArgs = JSON.parse(toolCall.function.arguments);
-              
-              // Update UI step based on tool - mapped to our real API tools
-              const stepMapping: Record<string, number> = {
-                'search_destination': 1,
-                'get_country_info': 1,
-                'get_city_info': 2,
-                'search_attractions': 3,
-                'get_neighborhoods': 4,
-                'get_budget_info': 5,
-                'get_transportation': 6,
-                'get_safety_info': 7,
-                'get_culture_info': 8,
-                'get_local_tips': 9,
-                'search_images': 10,
-                'get_weather': 5,
-                'get_visa_info': 7,
-                'compare_destinations': 2,
-                'finalize_guide': 11,
-              };
-              
-              const stepIndex = stepMapping[toolName] || currentStepIndex;
-              
-              // Complete previous step and activate new one
-              if (stepIndex > currentStepIndex) {
-                sendStep(currentStepIndex, 'complete');
-                currentStepIndex = stepIndex;
-                sendStep(currentStepIndex, 'active');
-              }
-              
-              sendToolCall(toolName);
-              
-              // Execute the tool - now returns ToolResult object
-              const toolResult: ToolResult = await executeTool(toolName, toolArgs);
-              
-              // Store collected data for guide generation (keep full data)
-              if (toolResult.success && toolResult.data) {
-                collectedData[toolName] = toolResult.data;
-              }
-              
-              // Format result for message - TRUNCATE to avoid 413 errors
-              const resultContent = toolResult.success 
-                ? truncateToolResult(toolResult.data)
-                : `Error: ${toolResult.error || 'Tool execution failed'}`;
-              
-              // Add to messages
-              messages.push({
-                role: 'assistant',
-                content: null,
-                tool_calls: [toolCall],
-              });
-              
-              messages.push({
-                role: 'tool',
-                content: resultContent,
-                tool_call_id: toolCall.id,
-                name: toolName,
-              });
-              
-              toolCallCount++;
-              sendProgress(Math.min(10 + (toolCallCount / maxToolCalls) * 80, 90));
-            }
-          } else {
-            // AI finished with tools, final response
-            researchComplete = true;
+          // Update step if needed
+          if (task.stepIndex > currentStepIndex) {
+            sendStep(currentStepIndex, 'complete');
+            currentStepIndex = task.stepIndex;
+            sendStep(currentStepIndex, 'active');
           }
+          
+          // Show tool being called
+          sendToolCall(task.toolName, 'running');
+          
+          // Execute the tool with real APIs
+          const args = task.getArgs(destination, collectedData);
+          console.log(`[Research] Executing: ${task.toolName}`, args);
+          
+          try {
+            const result: ToolResult = await executeTool(task.toolName, args);
+            
+            if (result.success && result.data) {
+              collectedData[task.toolName] = result.data;
+              console.log(`[Research] ${task.toolName} completed with data`);
+            } else {
+              console.log(`[Research] ${task.toolName} failed:`, result.error);
+            }
+          } catch (error) {
+            console.error(`[Research] Error executing ${task.toolName}:`, error);
+          }
+          
+          // Update progress
+          const progress = 10 + ((i + 1) / RESEARCH_SEQUENCE.length) * 80;
+          sendProgress(Math.round(progress));
+          
+          // Small delay to show progress in UI
+          await new Promise(r => setTimeout(r, 100));
         }
         
         // Complete remaining steps
         for (let i = currentStepIndex; i < steps.length; i++) {
           sendStep(i, 'complete');
-          await new Promise(r => setTimeout(r, 200));
         }
         
         sendProgress(95);
+        console.log(`[Research] All tools executed, synthesizing guide...`);
         
         // Generate the final travel guide from collected real API data
         const guide = synthesizeGuideFromData(destination, collectedData);
         
         sendProgress(100);
+        console.log(`[Research] Guide generated for ${destination}`);
         
         // Send complete event with guide
         controller.enqueue(encoder.encode(JSON.stringify({
