@@ -20,6 +20,11 @@ interface OverviewSectionProps {
 }
 
 export function OverviewSection({ overview, destination, imageUrl }: OverviewSectionProps) {
+  // Return null if no overview data - prevents client-side crash
+  if (!overview) {
+    return null;
+  }
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -110,7 +115,7 @@ export function OverviewSection({ overview, destination, imageUrl }: OverviewSec
             </div>
             <h3 className="font-semibold text-foreground">Time Zone</h3>
           </div>
-          <p className="text-muted-foreground">{overview.timeZone}</p>
+          <p className="text-muted-foreground">{overview?.timeZone || 'Check local time'}</p>
         </div>
         
         <div className="bg-white rounded-2xl shadow-lg border border-card-border p-6">
@@ -120,7 +125,7 @@ export function OverviewSection({ overview, destination, imageUrl }: OverviewSec
             </div>
             <h3 className="font-semibold text-foreground">Visa Info</h3>
           </div>
-          <p className="text-muted-foreground">{overview.visaInfo}</p>
+          <p className="text-muted-foreground">{overview?.visaInfo || 'Check visa requirements for your nationality'}</p>
         </div>
       </div>
     </motion.section>

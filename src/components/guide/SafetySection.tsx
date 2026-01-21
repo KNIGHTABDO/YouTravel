@@ -101,6 +101,7 @@ export function SafetySection({ safety }: SafetySectionProps) {
       </div>
       
       {/* Emergency Numbers */}
+      {safety.emergencyNumbers && (
       <div className="bg-white rounded-2xl shadow-lg border border-card-border p-6 mb-6">
         <div className="flex items-center gap-3 mb-4">
           <div className="w-10 h-10 bg-red-100 rounded-lg flex items-center justify-center">
@@ -111,21 +112,22 @@ export function SafetySection({ safety }: SafetySectionProps) {
         <div className="grid grid-cols-3 gap-4">
           <div className="text-center p-4 bg-muted rounded-xl">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Police</p>
-            <p className="text-xl font-bold text-foreground">{safety.emergencyNumbers.police}</p>
+            <p className="text-xl font-bold text-foreground">{safety.emergencyNumbers?.police || 'Check locally'}</p>
           </div>
           <div className="text-center p-4 bg-muted rounded-xl">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Ambulance</p>
-            <p className="text-xl font-bold text-foreground">{safety.emergencyNumbers.ambulance}</p>
+            <p className="text-xl font-bold text-foreground">{safety.emergencyNumbers?.ambulance || 'Check locally'}</p>
           </div>
           <div className="text-center p-4 bg-muted rounded-xl">
             <p className="text-xs text-muted-foreground uppercase tracking-wide mb-1">Tourist Help</p>
-            <p className="text-lg font-bold text-foreground">{safety.emergencyNumbers.tourist}</p>
+            <p className="text-lg font-bold text-foreground">{safety.emergencyNumbers?.tourist || 'Contact embassy'}</p>
           </div>
         </div>
       </div>
+      )}
       
       {/* Health Advice */}
-      {safety.healthAdvice.length > 0 && (
+      {safety.healthAdvice && safety.healthAdvice.length > 0 && (
         <div className="bg-gradient-to-r from-green-50 to-blue-50 rounded-2xl p-6">
           <div className="flex items-center gap-3 mb-4">
             <Heart className="w-5 h-5 text-red-500" />

@@ -15,6 +15,26 @@ export function BudgetSection({ budget }: BudgetSectionProps) {
     return null;
   }
   
+  // Provide safe defaults for nested properties
+  const breakdown = budget.breakdown || {
+    accommodation: { budget: 'N/A', midRange: 'N/A', luxury: 'N/A' },
+    food: { budget: 'N/A', midRange: 'N/A', luxury: 'N/A' },
+    transport: { budget: 'N/A', midRange: 'N/A', luxury: 'N/A' },
+    activities: { budget: 'N/A', midRange: 'N/A', luxury: 'N/A' },
+  };
+  
+  const weeklyTotal = budget.weeklyTotal || {
+    budget: { min: 0, max: 0 },
+    midRange: { min: 0, max: 0 },
+    luxury: { min: 0, max: 0 },
+  };
+  
+  const daily = budget.daily || {
+    budget: { min: 0, max: 0 },
+    midRange: { min: 0, max: 0 },
+    luxury: { min: 0, max: 0 },
+  };
+  
   return (
     <motion.section
       initial={{ opacity: 0 }}
@@ -39,8 +59,8 @@ export function BudgetSection({ budget }: BudgetSectionProps) {
           type="budget"
           label="Budget Traveler"
           icon={<TrendingDown className="w-5 h-5" />}
-          range={budget.daily.budget}
-          currency={budget.currency}
+          range={daily.budget}
+          currency={budget.currency || 'USD'}
           color="green"
           description="Hostels, street food, public transport"
         />
@@ -48,8 +68,8 @@ export function BudgetSection({ budget }: BudgetSectionProps) {
           type="mid-range"
           label="Mid-Range"
           icon={<DollarSign className="w-5 h-5" />}
-          range={budget.daily.midRange}
-          currency={budget.currency}
+          range={daily.midRange}
+          currency={budget.currency || 'USD'}
           color="blue"
           description="Hotels, restaurants, mix of activities"
           featured
@@ -58,8 +78,8 @@ export function BudgetSection({ budget }: BudgetSectionProps) {
           type="luxury"
           label="Luxury"
           icon={<TrendingUp className="w-5 h-5" />}
-          range={budget.daily.luxury}
-          currency={budget.currency}
+          range={daily.luxury}
+          currency={budget.currency || 'USD'}
           color="purple"
           description="5-star hotels, fine dining, premium experiences"
         />
@@ -84,27 +104,27 @@ export function BudgetSection({ budget }: BudgetSectionProps) {
             <tbody className="divide-y divide-card-border">
               <tr>
                 <td className="p-4 font-medium text-foreground">🏨 Accommodation</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.accommodation.budget}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.accommodation.midRange}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.accommodation.luxury}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.accommodation?.budget || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.accommodation?.midRange || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.accommodation?.luxury || 'N/A'}</td>
               </tr>
               <tr>
                 <td className="p-4 font-medium text-foreground">🍽️ Food</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.food.budget}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.food.midRange}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.food.luxury}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.food?.budget || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.food?.midRange || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.food?.luxury || 'N/A'}</td>
               </tr>
               <tr>
                 <td className="p-4 font-medium text-foreground">🚌 Transport</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.transport.budget}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.transport.midRange}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.transport.luxury}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.transport?.budget || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.transport?.midRange || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.transport?.luxury || 'N/A'}</td>
               </tr>
               <tr>
                 <td className="p-4 font-medium text-foreground">🎭 Activities</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.activities.budget}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.activities.midRange}</td>
-                <td className="p-4 text-sm text-muted-foreground">{budget.breakdown.activities.luxury}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.activities?.budget || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.activities?.midRange || 'N/A'}</td>
+                <td className="p-4 text-sm text-muted-foreground">{breakdown.activities?.luxury || 'N/A'}</td>
               </tr>
             </tbody>
           </table>
@@ -118,26 +138,26 @@ export function BudgetSection({ budget }: BudgetSectionProps) {
           <div className="text-center p-4 bg-white rounded-xl">
             <p className="text-sm text-green-600 font-medium mb-1">Budget</p>
             <p className="text-2xl font-bold text-foreground">
-              ${budget.weeklyTotal.budget.min} - ${budget.weeklyTotal.budget.max}
+              ${weeklyTotal.budget?.min || 0} - ${weeklyTotal.budget?.max || 0}
             </p>
           </div>
           <div className="text-center p-4 bg-white rounded-xl border-2 border-primary">
             <p className="text-sm text-blue-600 font-medium mb-1">Mid-Range</p>
             <p className="text-2xl font-bold text-foreground">
-              ${budget.weeklyTotal.midRange.min} - ${budget.weeklyTotal.midRange.max}
+              ${weeklyTotal.midRange?.min || 0} - ${weeklyTotal.midRange?.max || 0}
             </p>
           </div>
           <div className="text-center p-4 bg-white rounded-xl">
             <p className="text-sm text-purple-600 font-medium mb-1">Luxury</p>
             <p className="text-2xl font-bold text-foreground">
-              ${budget.weeklyTotal.luxury.min} - ${budget.weeklyTotal.luxury.max}
+              ${weeklyTotal.luxury?.min || 0} - ${weeklyTotal.luxury?.max || 0}
             </p>
           </div>
         </div>
       </div>
       
       {/* Money-Saving Tips */}
-      {budget.tips.length > 0 && (
+      {budget.tips && budget.tips.length > 0 && (
         <div className="bg-white rounded-2xl shadow-lg border border-card-border p-6">
           <h3 className="text-lg font-bold text-foreground mb-4 flex items-center gap-2">
             <Lightbulb className="w-5 h-5 text-accent" />

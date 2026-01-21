@@ -128,7 +128,7 @@ function AttractionCard({ attraction, index }: { attraction: Attraction; index: 
         </div>
         
         {/* Tips */}
-        {attraction.tips.length > 0 && (
+        {attraction.tips && attraction.tips.length > 0 && (
           <div>
             <p className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-2 flex items-center gap-1">
               <Lightbulb className="w-3 h-3" />
