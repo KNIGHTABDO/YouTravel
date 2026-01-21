@@ -20,6 +20,12 @@ interface TravelGuideDisplayProps {
 }
 
 export function TravelGuideDisplay({ guide, onReset }: TravelGuideDisplayProps) {
+  // CRITICAL: Return null if guide is not provided to prevent client-side crash
+  if (!guide) {
+    console.error('TravelGuideDisplay: guide prop is undefined');
+    return null;
+  }
+  
   const scrollToTop = () => {
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
@@ -30,7 +36,7 @@ export function TravelGuideDisplay({ guide, onReset }: TravelGuideDisplayProps) 
       animate={{ opacity: 1 }}
       transition={{ duration: 0.8 }}
       className="min-h-screen"
-      data-theme={guide.theme}
+      data-theme={guide.theme || 'default'}
     >
       {/* Navigation */}
       <nav className="sticky top-0 z-50 bg-white/80 backdrop-blur-xl border-b border-card-border">
@@ -95,7 +101,7 @@ export function TravelGuideDisplay({ guide, onReset }: TravelGuideDisplayProps) 
           className="bg-gradient-to-r from-primary to-primary-dark rounded-3xl p-8 md:p-12 text-white text-center"
         >
           <h2 className="text-2xl md:text-3xl font-bold mb-4">
-            Ready for your adventure in {guide.destination}?
+            Ready for your adventure in {guide.destination || 'your destination'}?
           </h2>
           <p className="text-white/80 mb-6 max-w-2xl mx-auto">
             This guide was created by our AI research agent. Start a new search to explore more destinations.

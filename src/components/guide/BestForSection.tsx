@@ -78,6 +78,7 @@ export function BestForSection({ bestFor }: BestForSectionProps) {
               <p className="text-muted-foreground mb-4">{traveler.why}</p>
               
               {/* Highlights */}
+              {traveler.highlights && traveler.highlights.length > 0 && (
               <div>
                 <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide mb-2">Highlights</p>
                 <ul className="space-y-2">
@@ -89,6 +90,7 @@ export function BestForSection({ bestFor }: BestForSectionProps) {
                   ))}
                 </ul>
               </div>
+              )}
             </div>
           </motion.div>
         ))}

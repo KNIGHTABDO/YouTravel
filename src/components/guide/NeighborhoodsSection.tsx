@@ -79,7 +79,7 @@ export function NeighborhoodsSection({ neighborhoods }: NeighborhoodsSectionProp
                   <span>Nightly rate</span>
                 </div>
                 <span className="font-bold text-foreground">
-                  ${neighborhood.priceRange.min} - ${neighborhood.priceRange.max}
+                  ${neighborhood.priceRange?.min || 0} - ${neighborhood.priceRange?.max || 0}
                 </span>
               </div>
             </div>
