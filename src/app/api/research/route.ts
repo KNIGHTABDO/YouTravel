@@ -7,6 +7,58 @@ import { TravelGuide, ResearchStep, BudgetEstimate, TransportationGuide, SafetyI
 const GITHUB_MODELS_ENDPOINT = 'https://models.github.ai/inference';
 const MODEL = 'openai/gpt-4.1';
 
+// Helper to truncate/summarize tool results to avoid 413 errors
+const MAX_RESULT_LENGTH = 2000; // Max characters per tool result
+
+function truncateToolResult(data: any): string {
+  if (typeof data === 'string') {
+    return data.length > MAX_RESULT_LENGTH 
+      ? data.substring(0, MAX_RESULT_LENGTH) + '... [truncated]'
+      : data;
+  }
+  
+  // For objects, create a summarized version
+  const summarized = summarizeData(data);
+  const json = JSON.stringify(summarized, null, 1);
+  
+  if (json.length > MAX_RESULT_LENGTH) {
+    return json.substring(0, MAX_RESULT_LENGTH) + '... [truncated]';
+  }
+  return json;
+}
+
+function summarizeData(data: any): any {
+  if (!data || typeof data !== 'object') return data;
+  
+  if (Array.isArray(data)) {
+    // Limit arrays to first 5 items and summarize each
+    return data.slice(0, 5).map(item => summarizeData(item));
+  }
+  
+  const summary: any = {};
+  for (const [key, value] of Object.entries(data)) {
+    // Skip very long text fields
+    if (typeof value === 'string') {
+      summary[key] = value.length > 300 ? value.substring(0, 300) + '...' : value;
+    } else if (Array.isArray(value)) {
+      summary[key] = value.slice(0, 5).map(v => 
+        typeof v === 'string' && v.length > 100 ? v.substring(0, 100) + '...' : 
+        typeof v === 'object' ? summarizeData(v) : v
+      );
+    } else if (typeof value === 'object' && value !== null) {
+      // Skip deeply nested objects like full wiki content
+      if (key === 'wikiContent' || key === 'fullContent' || key === 'html') {
+        summary[key] = '[content available]';
+      } else {
+        summary[key] = summarizeData(value);
+      }
+    } else {
+      summary[key] = value;
+    }
+  }
+  return summary;
+}
+
 // System prompt for the travel research agent
 const SYSTEM_PROMPT = `You are an autonomous travel research agent with access to REAL APIs that gather live data from the internet.
 
@@ -517,14 +569,14 @@ export async function POST(request: NextRequest) {
               // Execute the tool - now returns ToolResult object
               const toolResult: ToolResult = await executeTool(toolName, toolArgs);
               
-              // Store collected data for guide generation
+              // Store collected data for guide generation (keep full data)
               if (toolResult.success && toolResult.data) {
                 collectedData[toolName] = toolResult.data;
               }
               
-              // Format result for message - stringify if object
+              // Format result for message - TRUNCATE to avoid 413 errors
               const resultContent = toolResult.success 
-                ? (typeof toolResult.data === 'string' ? toolResult.data : JSON.stringify(toolResult.data, null, 2))
+                ? truncateToolResult(toolResult.data)
                 : `Error: ${toolResult.error || 'Tool execution failed'}`;
               
               // Add to messages
