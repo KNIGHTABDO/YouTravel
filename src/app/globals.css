@@ -1,0 +1,270 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #fafafa;
+  --foreground: #171717;
+  --primary: #0ea5e9;
+  --primary-light: #7dd3fc;
+  --primary-dark: #0369a1;
+  --accent: #f59e0b;
+  --muted: #f5f5f5;
+  --muted-foreground: #737373;
+  --card: #ffffff;
+  --card-border: #e5e5e5;
+}
+
+/* Country-specific color themes */
+[data-theme="japan"] {
+  --primary: #dc2626;
+  --primary-light: #fca5a5;
+  --primary-dark: #991b1b;
+  --accent: #fbbf24;
+}
+
+[data-theme="france"] {
+  --primary: #2563eb;
+  --primary-light: #93c5fd;
+  --primary-dark: #1d4ed8;
+  --accent: #dc2626;
+}
+
+[data-theme="brazil"] {
+  --primary: #16a34a;
+  --primary-light: #86efac;
+  --primary-dark: #15803d;
+  --accent: #fbbf24;
+}
+
+[data-theme="morocco"] {
+  --primary: #ea580c;
+  --primary-light: #fdba74;
+  --primary-dark: #c2410c;
+  --accent: #14b8a6;
+}
+
+[data-theme="greece"] {
+  --primary: #2563eb;
+  --primary-light: #93c5fd;
+  --primary-dark: #1e40af;
+  --accent: #ffffff;
+}
+
+[data-theme="thailand"] {
+  --primary: #7c3aed;
+  --primary-light: #c4b5fd;
+  --primary-dark: #6d28d9;
+  --accent: #fbbf24;
+}
+
+[data-theme="italy"] {
+  --primary: #16a34a;
+  --primary-light: #86efac;
+  --primary-dark: #15803d;
+  --accent: #dc2626;
+}
+
+[data-theme="mexico"] {
+  --primary: #16a34a;
+  --primary-light: #86efac;
+  --primary-dark: #15803d;
+  --accent: #dc2626;
+}
+
+[data-theme="india"] {
+  --primary: #ea580c;
+  --primary-light: #fdba74;
+  --primary-dark: #c2410c;
+  --accent: #16a34a;
+}
+
+[data-theme="egypt"] {
+  --primary: #d97706;
+  --primary-light: #fcd34d;
+  --primary-dark: #b45309;
+  --accent: #1d4ed8;
+}
+
+[data-theme="australia"] {
+  --primary: #2563eb;
+  --primary-light: #93c5fd;
+  --primary-dark: #1d4ed8;
+  --accent: #fbbf24;
+}
+
+[data-theme="iceland"] {
+  --primary: #0891b2;
+  --primary-light: #67e8f9;
+  --primary-dark: #0e7490;
+  --accent: #dc2626;
+}
+
+[data-theme="peru"] {
+  --primary: #dc2626;
+  --primary-light: #fca5a5;
+  --primary-dark: #991b1b;
+  --accent: #fbbf24;
+}
+
+[data-theme="new-zealand"] {
+  --primary: #000000;
+  --primary-light: #525252;
+  --primary-dark: #171717;
+  --accent: #dc2626;
+}
+
+[data-theme="spain"] {
+  --primary: #dc2626;
+  --primary-light: #fca5a5;
+  --primary-dark: #991b1b;
+  --accent: #fbbf24;
+}
+
+[data-theme="vietnam"] {
+  --primary: #dc2626;
+  --primary-light: #fca5a5;
+  --primary-dark: #991b1b;
+  --accent: #fbbf24;
+}
+
+[data-theme="portugal"] {
+  --primary: #16a34a;
+  --primary-light: #86efac;
+  --primary-dark: #15803d;
+  --accent: #dc2626;
+}
+
+[data-theme="turkey"] {
+  --primary: #dc2626;
+  --primary-light: #fca5a5;
+  --primary-dark: #991b1b;
+  --accent: #ffffff;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  font-family: 'Inter', system-ui, -apple-system, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+@layer components {
+  .glass-card {
+    @apply bg-white/80 backdrop-blur-xl border border-white/20 shadow-xl;
+  }
+  
+  .gradient-text {
+    @apply bg-clip-text text-transparent bg-gradient-to-r from-primary to-primary-dark;
+  }
+  
+  .shimmer {
+    background: linear-gradient(90deg, transparent, rgba(255,255,255,0.4), transparent);
+    background-size: 200% 100%;
+    animation: shimmer 2s infinite;
+  }
+  
+  .card-hover {
+    @apply transition-all duration-300 hover:shadow-2xl hover:-translate-y-1;
+  }
+  
+  .input-focus {
+    @apply focus:outline-none focus:ring-2 focus:ring-primary/50 focus:border-primary transition-all duration-200;
+  }
+  
+  .btn-primary {
+    @apply bg-primary text-white font-medium py-3 px-6 rounded-xl hover:bg-primary-dark transition-all duration-200 shadow-lg hover:shadow-xl active:scale-[0.98];
+  }
+  
+  .section-title {
+    @apply text-2xl md:text-3xl font-bold text-foreground mb-6;
+  }
+  
+  .text-balance {
+    text-wrap: balance;
+  }
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--muted);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--muted-foreground);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--foreground);
+}
+
+/* Prose styles for travel guide content */
+.prose {
+  @apply text-foreground leading-relaxed;
+}
+
+.prose h1 {
+  @apply text-3xl md:text-4xl font-bold mb-6 mt-12 first:mt-0;
+}
+
+.prose h2 {
+  @apply text-2xl md:text-3xl font-bold mb-4 mt-10;
+}
+
+.prose h3 {
+  @apply text-xl md:text-2xl font-semibold mb-3 mt-8;
+}
+
+.prose p {
+  @apply mb-4 text-base md:text-lg;
+}
+
+.prose ul {
+  @apply list-disc list-inside mb-4 space-y-2;
+}
+
+.prose ol {
+  @apply list-decimal list-inside mb-4 space-y-2;
+}
+
+.prose li {
+  @apply text-base md:text-lg;
+}
+
+.prose strong {
+  @apply font-semibold;
+}
+
+/* Loading states */
+.skeleton {
+  @apply bg-muted animate-pulse rounded;
+}
+
+/* Responsive container */
+.container-custom {
+  @apply max-w-7xl mx-auto px-4 sm:px-6 lg:px-8;
+}
+
+/* Hide scrollbar but keep functionality */
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
